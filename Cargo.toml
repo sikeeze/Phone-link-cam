@@ -1,0 +1,88 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/rtc",
+    "crates/media",
+    "crates/vcam",
+    "crates/vmic",
+    "crates/desktop",  # binary: PhoneCam desktop app (Phase 0: HTTPS + WS signaling server)
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/phonecam/phonecam"
+
+[workspace.dependencies]
+# Async runtime + networking
+tokio = { version = "1.54", features = ["full"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["fs", "trace", "cors"] }
+hyper = "1.12"
+hyper-util = { version = "0.1", features = ["tokio"] }
+http = "1.5"
+http-body-util = "0.1"
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+bytes = "1.12"
+futures = "0.3"
+
+# TLS / certificates (self-signed untuk prototipe, lihat docs/adr/0001)
+rustls = "0.23"
+tokio-rustls = "0.26"
+rcgen = "0.14"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Encoding
+base64 = "0.23"
+hex = "0.4"
+url = "2.5"
+
+# Crypto: PIN/token hashing (tidak menyimpan PIN di log - aturan A8)
+sha2 = "0.11"
+hmac = "0.13"
+
+# Utilitas
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+once_cell = "1.21"
+parking_lot = "0.13"
+uuid = { version = "1.29", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+rand = "0.10"
+mime_guess = "2.0"
+rust-embed = "8.13"
+clap = { version = "4.6", features = ["derive"] }
+async-trait = "0.1"
+
+# Jaringan lokal
+local-ip-address = "0.6"
+
+# Internal crates
+phonecam-core = { path = "crates/core" }
+phonecam-rtc = { path = "crates/rtc" }
+phonecam-media = { path = "crates/media" }
+phonecam-vcam = { path = "crates/vcam" }
+phonecam-vmic = { path = "crates/vmic" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+
+# Aturan A11: tidak boleh ada unwrap()/expect() dalam kode non-test.
+# Aturan A7: hot path media tanpa alokasi per-frame, tanpa I/O disk, tanpa logging > trace.

@@ -1,0 +1,20 @@
+[package]
+name = "phonecam-rtc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PhoneCam WebRTC receiver, jitter buffer, adaptasi bitrate"
+
+[dependencies]
+phonecam-core = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+once_cell = { workspace = true }
+async-trait = { workspace = true }

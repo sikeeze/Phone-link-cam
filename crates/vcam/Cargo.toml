@@ -1,0 +1,15 @@
+[package]
+name = "phonecam-vcam"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PhoneCam virtual camera abstraction (per-OS backend diimplementasikan di sini)"
+
+[dependencies]
+phonecam-core = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+bytes = { workspace = true }

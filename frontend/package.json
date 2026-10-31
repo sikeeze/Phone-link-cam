@@ -1,0 +1,21 @@
+{
+  "name": "phonecam-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --https"
+  },
+  "dependencies": {
+    "preact": "^10.26.1",
+    "preact-router": "^4.1.2",
+    "lucide-preact": "^0.477.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
+  }
+}

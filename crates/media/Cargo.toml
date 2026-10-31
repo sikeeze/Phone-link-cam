@@ -1,0 +1,17 @@
+[package]
+name = "phonecam-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PhoneCam decode, scaler, compositor, switcher"
+
+[dependencies]
+phonecam-core = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+once_cell = { workspace = true }
+async-trait = { workspace = true }
