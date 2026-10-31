@@ -1,0 +1,28 @@
+#Rust build artifacts
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Frontend
+frontend/node_modules
+frontend/dist
+frontend/tsconfig.tsbuildinfo
+*.local
+
+# Sertifikat yang dibuat saat runtime (rcgen)
+*.pem
+*.crt
+*.key
+
+# Pengaturan & data sesi yang dibuat saat runtime
+settings.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Dokumen desain internal — jangan dibagikan
+*.pdf
