@@ -250,8 +250,15 @@ async fn https_serves_frontend_and_health() {
         "index.html harus no-cache: {body}"
     );
 
-    // Aset ber-hash boleh di-cache kuat (B1).
-    let (status, body) = https_get(&server.addr, "/assets/index-DyVUvTLH.css").await;
+    // Aset ber-hash boleh di-cache kuat (B1). Nama file berubah tiap build
+    // (hash Vite), jadi ambil nama css pertama yang tersedia saat ini.
+    let css = std::fs::read_dir("../../frontend/dist/assets")
+        .expect("dist assets harus ada (build frontend)")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .find(|n| n.ends_with(".css"))
+        .expect("minimal satu file css di dist/assets");
+    let (status, body) = https_get(&server.addr, &format!("/assets/{css}")).await;
     assert_eq!(status, 200, "aset statis harus dilayani");
     assert!(
         body.contains("content-type: text/css"),

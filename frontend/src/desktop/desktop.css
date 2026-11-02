@@ -1,0 +1,352 @@
+/* UI aplikasi desktop (README C3): jendela 1100x720, sidebar 72px,
+ * layar Beranda / Kamera / Studio / Pengaturan.
+ */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Sidebar (C3: ikon Beranda, Kamera, Studio, Pengaturan) */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s4) 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar .logo {
+  width: 32px;
+  height: 32px;
+  margin-bottom: var(--s4);
+  border-radius: var(--r-control);
+  background: linear-gradient(135deg, var(--accent), #9b8bff);
+}
+
+.nav-btn {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
+}
+
+.nav-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.nav-btn.active {
+  background: var(--surface-2);
+  color: var(--accent);
+}
+
+.sidebar .spacer {
+  flex: 1;
+}
+
+/* Status pill (C2) */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s3);
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.status-pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+}
+
+.status-pill.disconnected .dot {
+  background: var(--danger);
+}
+
+/* Panel utama */
+.main {
+  padding: var(--s5);
+  overflow-y: auto;
+}
+
+.main h1 {
+  margin: 0 0 var(--s2);
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.main .subtitle {
+  margin: 0 0 var(--s5);
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Kartu */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--s4);
+}
+
+/* Tombol */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--d-fast) var(--ease), background var(--d-fast) var(--ease);
+}
+
+.btn:hover {
+  background: var(--border);
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover {
+  background: #7d70ff;
+}
+
+/* Beranda (C3.1): QR 220px, URL mono, PIN 6 digit */
+.home-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s5);
+  align-items: start;
+}
+
+.qr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.qr-card img,
+.qr-card svg {
+  width: 220px;
+  height: 220px;
+  background: #fff;
+  border-radius: var(--r-control);
+  padding: var(--s2);
+}
+
+.pin-display {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.pin-display .pin {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  letter-spacing: 6px;
+  font-weight: 600;
+}
+
+.pair-url {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.pair-url code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  user-select: all;
+}
+
+/* Daftar HP terhubung */
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s5);
+}
+
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  font-size: 14px;
+}
+
+.source-row .name {
+  font-weight: 600;
+}
+
+.source-row .tag {
+  padding: 2px var(--s2);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s6) 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Banner vcam belum terpasang (C3.1) */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s5);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--warn);
+  border-radius: var(--r-control);
+  background: rgb(245 165 36 / 0.08);
+  font-size: 14px;
+}
+
+/* Studio (C3.3) */
+.studio-grid {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: var(--s4);
+}
+
+.preview {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-panel);
+  background: #000;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.preview .live-label {
+  position: absolute;
+  top: var(--s3);
+  left: var(--s3);
+  padding: 2px var(--s2);
+  border-radius: var(--r-pill);
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.control-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.control-panel input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* Pengaturan (C3.4) */
+.settings-section {
+  margin-bottom: var(--s5);
+}
+
+.settings-section h2 {
+  margin: 0 0 var(--s2);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+/* Toggle */
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--border);
+  cursor: pointer;
+  transition: background var(--d-base) var(--ease);
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform var(--d-base) var(--ease);
+}
+
+.toggle.on {
+  background: var(--accent);
+}
+
+.toggle.on::after {
+  transform: translateX(18px);
+}

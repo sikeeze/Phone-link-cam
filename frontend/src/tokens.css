@@ -1,0 +1,67 @@
+/* Token desain PhoneCam (README C1). Dipakai UI desktop dan PWA HP.
+ * Tema gelap default; terang via [data-theme="light"].
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Warna (C1) */
+  --bg: #0b0d12;
+  --surface: #12151c;
+  --surface-2: #1a1e28;
+  --border: #262b38;
+  --text: #e8eaf0;
+  --text-muted: #8a91a5;
+  --accent: #6c5cff;
+  --live: #22d3a6;
+  --warn: #f5a524;
+  --danger: #f04438;
+
+  /* Tipografi: Inter, angka/IP JetBrains Mono */
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  /* Radius (C1) */
+  --r-control: 8px;
+  --r-card: 12px;
+  --r-panel: 20px;
+  --r-pill: 999px;
+
+  /* Spasi kelipatan 4 */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  /* Durasi (C1) */
+  --d-fast: 120ms;
+  --d-base: 200ms;
+  --d-slow: 320ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f7fa;
+  --surface: #ffffff;
+  --surface-2: #eef0f5;
+  --border: #e3e6ee;
+  --text: #12151c;
+  --text-muted: #5b6275;
+  --accent: #5b4bf0;
+  --live: #0fa37f;
+  --warn: #c47f0a;
+  --danger: #d12c20;
+}
+
+/* Reduced motion (C2): animasi hanya fade 80 ms */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 80ms !important;
+    transition-duration: 80ms !important;
+  }
+}

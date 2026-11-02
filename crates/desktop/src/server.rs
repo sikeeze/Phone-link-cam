@@ -13,7 +13,7 @@ use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 
 use phonecam_core::net::list_private_interfaces;
@@ -36,6 +36,9 @@ pub async fn serve(app_state: Arc<AppState>) -> phonecam_core::Result<()> {
     // B1: bila port 8443 sudah dipakai, cari port kosong berikutnya.
     let port = pick_free_port(base_port, &bind_ips)?;
     tracing::info!(port, base = base_port, "port HTTPS dipilih (B1)");
+    // B1: catat port aktual agar UI desktop bisa membuat URL pairing tanpa
+    // menebak (fallback port default bila belum ditulis).
+    *app_state.https_port.write() = Some(port);
     let cert = tls::generate(&bind_ips)?;
     let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
         cert.cert_pem.as_bytes().to_vec(),
@@ -105,7 +108,8 @@ fn bind_ips() -> phonecam_core::Result<Vec<IpAddr>> {
     Ok(ips)
 }
 
-/// Router axum (B1): `/`, `/assets/*`, `/ws`, `/health`, `/qr`.
+/// Router axum (B1): `/`, `/assets/*`, `/ws`, `/health`, `/qr`, plus UI
+/// desktop (C3): `/app` dan endpoint JSON `/api/*`.
 /// `pub` agar integration test dapat memakai router produksi (fase 1).
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -114,6 +118,13 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ws", get(ws_handler))
         .route("/health", get(health))
         .route("/qr", get(qr))
+        // C3: UI desktop (webview Tauri maupun browser) disajikan dari
+        // sub-folder `desktop/` hasil build Vite multi-page.
+        .route("/app", get(desktop_index))
+        .route("/app/assets/{*path}", get(desktop_asset))
+        // C3.1: state untuk UI desktop (PIN, QR, sumber, status vcam).
+        .route("/api/state", get(api_state))
+        .route("/api/pin/regenerate", post(api_pin_regenerate))
 }
 
 /// `GET /` — halaman pairing PWA (B1).
@@ -203,5 +214,108 @@ async fn qr(State(state): State<Arc<AppState>>, headers: HeaderMap) -> axum::res
             )
                 .into_response()
         }
+    }
+}
+
+/// `GET /app` — UI desktop (C3). Webview Tauri membuka URL ini dari
+/// server HTTPS lokal; tidak ada server dev terpisah.
+async fn desktop_index() -> impl IntoResponse {
+    assets::serve("desktop/index.html").await
+}
+
+/// `GET /app/assets/*path` — aset statis UI desktop (C3).
+async fn desktop_asset(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    assets::serve(&format!("desktop/assets/{path}")).await
+}
+
+/// `GET /api/state` — state UI desktop (C3.1): PIN aktif + hitung mundur,
+/// URL pairing, QR, status pemasangan vcam, dan daftar sumber HP.
+async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let pairing = state.pairing.current();
+    let sources = state
+        .sources
+        .read()
+        .list()
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.id.to_string(),
+                "name": s.info.name,
+                "connection_kind": s.info.connection_kind.label_id(),
+                "state": state_label(&s.status.state.0),
+                "battery": s.status.battery,
+                "rtt_ms": s.status.rtt_ms,
+            })
+        })
+        .collect::<Vec<_>>();
+    axum::Json(serde_json::json!({
+        "pin": pairing.pin.as_str(),
+        "pin_remaining_secs": pairing.remaining(crate::app::now_secs()),
+        "pair_url": format!("https://{}", lan_host(&state)),
+        "qr_url": "/qr",
+        "vcam_installed": vcam_installed(&state).await,
+        "sources": sources,
+    }))
+}
+
+/// `POST /api/pin/regenerate` — PIN baru dari UI (B2: bisa di-regenerate).
+async fn api_pin_regenerate(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let pairing = state.pairing.regenerate(crate::app::now_secs());
+    axum::Json(serde_json::json!({
+        "pin": pairing.pin.as_str(),
+        "pin_remaining_secs": pairing.remaining(crate::app::now_secs()),
+    }))
+}
+
+/// Header Host tidak tersedia di handler JSON; pakai IP antarmuka privat
+/// pertama (B9.1: URL memakai IP antarmuka jalur ini).
+fn lan_host(state: &Arc<AppState>) -> String {
+    let port = state.https_port.read().unwrap_or(settings_default_port());
+    match list_private_interfaces() {
+        Ok(ifs) => ifs
+            .iter()
+            .flat_map(|i| i.addrs.iter().copied())
+            .next()
+            .map(|ip| format!("{ip}:{port}"))
+            .unwrap_or_else(|| format!("localhost:{port}")),
+        Err(_) => format!("localhost:{port}"),
+    }
+}
+
+/// Port default dari pengaturan (B1) sebagai cadangan sebelum `serve`
+/// menulis port aktual.
+fn settings_default_port() -> u16 {
+    phonecam_core::settings::Settings::default()
+        .network
+        .https_port
+}
+
+/// Label state sumber untuk UI (buah SessionState::label_id bahasa Indonesia).
+fn state_label(state: &phonecam_core::session::SessionState) -> &'static str {
+    use phonecam_core::session::SessionState::*;
+    match state {
+        Idle => "Menganggur",
+        Authenticating => "Mengautentikasi",
+        Connecting => "Menghubungkan",
+        Live => "live",
+        Degraded => "Menurun",
+        Reconnecting => "Menyambung ulang",
+        Closed => "Tertutup",
+    }
+}
+
+/// Port HTTPS tempat server mendengar (B1). Nilai konstan MVP; baca
+/// pengaturan saat sudah tersedia di UI.
+fn listen_port() -> u16 {
+    8443
+}
+
+/// Cek status pemasangan virtual camera (C3.1 banner).
+async fn vcam_installed(state: &Arc<AppState>) -> bool {
+    match state.vcam_or_start().await {
+        Ok(v) => matches!(v.status().await, Ok(phonecam_vcam::VCamStatus::Installed)),
+        Err(_) => false,
     }
 }

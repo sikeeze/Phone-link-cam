@@ -23,6 +23,9 @@ pub struct AppState {
     pub rate_limiter: RwLock<PinRateLimiter>,
     /// Registri sumber HP (B2: maks 6).
     pub sources: RwLock<SourceRegistry>,
+    /// Port HTTPS aktual yang dipilih server (B1: fallback bila port
+    /// default sibuk; ditulis sekali oleh `serve`).
+    pub https_port: RwLock<Option<u16>>,
     /// Virtual camera aktif (B6: satu output global; None bila belum aktif).
     pub vcam: RwLock<Option<std::sync::Arc<dyn VCam>>>,
 }
@@ -34,6 +37,7 @@ impl AppState {
             pairing: PairingManager::new(now_secs()),
             rate_limiter: RwLock::new(PinRateLimiter::new()),
             sources: RwLock::new(SourceRegistry::default()),
+            https_port: RwLock::new(None),
             vcam: RwLock::new(None),
         }
     }
