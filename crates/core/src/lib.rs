@@ -11,6 +11,7 @@ pub mod error;
 pub mod net;
 pub mod pairing;
 pub mod protocol;
+pub mod quality;
 pub mod security;
 pub mod session;
 pub mod settings;

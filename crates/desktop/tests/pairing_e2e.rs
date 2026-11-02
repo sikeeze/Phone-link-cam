@@ -388,8 +388,9 @@ fn retry_after_secs(reply: &serde_json::Value) -> u32 {
 
 #[tokio::test]
 async fn source_slot_freed_after_disconnect() {
-    // B2 regression: source registry harus dibersihkan saat WS tutup.
-    // Tanpa cleanup, 6 koneksi berurutan akan membuat sesi permanen penuh.
+    // B2/B3 regression: slot ke-6 tidak bocor. Sumber hanya dihapus setelah
+    // `bye` eksplisit atau anggaran reconnect 60 detik habis; di sini kita
+    // pakai `bye` (B4) agar slot langsung dibebaskan.
     let server = TestServer::start().await;
     let origin = format!("https://{}", server.addr);
 
@@ -413,7 +414,10 @@ async fn source_slot_freed_after_disconnect() {
         .expect("kirim auth");
         let reply = recv_json(&mut ws).await;
         assert_eq!(reply["type"], "auth_ok", "balasan: {reply}");
-        // Tutup koneksi: slot harus dibebaskan (B2).
+        // B4: `bye` eksplisit → source dihapus (B3: CLOSED langsung).
+        ws.send(Message::Text(msg("bye", "{}").into()))
+            .await
+            .expect("kirim bye");
         let _ = ws.close(None).await;
         // Beri waktu server memproses close.
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -425,6 +429,124 @@ async fn source_slot_freed_after_disconnect() {
         sources, 0,
         "registry bocor: {sources} sumber masih terdaftar"
     );
+}
+
+#[tokio::test]
+async fn token_reconnect_restores_source() {
+    // B2/B3: WS putus tanpa `bye` → RECONNECTING; HP reconnect dengan token
+    // dan sumber yang sama kembali LIVE (source_id sama).
+    let server = TestServer::start().await;
+    let origin = format!("https://{}", server.addr);
+
+    let mut ws = connect_ws(&server.addr, &origin).await;
+    ws.send(Message::Text(
+        msg(
+            "hello",
+            "{\"device_id\":\"dev1\",\"name\":\"Pixel 8\",\"user_agent\":\"ua\",\"capabilities\":{},\"transport\":\"webrtc\"}",
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim hello");
+    let pin = server.pin();
+    ws.send(Message::Text(
+        msg("auth", &format!("{{\"credential\":{{\"pin\":\"{pin}\"}}}}")).into(),
+    ))
+    .await
+    .expect("kirim auth");
+    let reply = recv_json(&mut ws).await;
+    assert_eq!(reply["type"], "auth_ok");
+    let token = reply["payload"]["token"]
+        .as_str()
+        .expect("token")
+        .to_string();
+    let source_id = reply["payload"]["source_id"]
+        .as_str()
+        .expect("source_id")
+        .to_string();
+
+    // WS putus tiba-tiba (tidak ada `bye`) → RECONNECTING.
+    let _ = ws.close(None).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    {
+        let sources = server.state.sources.read();
+        let s = sources.get(&source_id).expect("sumber harus tetap ada");
+        assert_eq!(
+            s.status.state.0,
+            phonecam_core::session::SessionState::Reconnecting,
+            "state harus RECONNECTING setelah putus tanpa bye"
+        );
+    }
+
+    // HP reconnect dengan token (B2: token berlaku selama sesi desktop hidup).
+    let mut ws2 = connect_ws(&server.addr, &origin).await;
+    ws2.send(Message::Text(
+        msg(
+            "hello",
+            "{\"device_id\":\"dev1\",\"name\":\"Pixel 8\",\"user_agent\":\"ua\",\"capabilities\":{},\"transport\":\"webrtc\"}",
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim hello");
+    ws2.send(Message::Text(
+        msg(
+            "auth",
+            &format!("{{\"credential\":{{\"token\":\"{token}\"}}}}"),
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim auth token");
+    let reply = recv_json(&mut ws2).await;
+    assert_eq!(reply["type"], "auth_ok", "reconnect via token: {reply}");
+    assert_eq!(
+        reply["payload"]["source_id"].as_str().expect("source_id"),
+        source_id,
+        "source_id harus sama setelah reconnect"
+    );
+
+    // State kembali LIVE (B3).
+    {
+        let sources = server.state.sources.read();
+        let s = sources.get(&source_id).expect("sumber harus tetap ada");
+        assert_eq!(
+            s.status.state.0,
+            phonecam_core::session::SessionState::Live,
+            "state harus LIVE setelah reconnect"
+        );
+    }
+    // Hanya 1 sumber di registry (tidak menduplikat).
+    assert_eq!(server.state.sources.read().list().len(), 1);
+}
+
+#[tokio::test]
+async fn token_unknown_rejected_as_bad_pin() {
+    // B2: token tidak dikenal → auth_fail BAD_PIN (mencegah tebakan token).
+    let server = TestServer::start().await;
+    let origin = format!("https://{}", server.addr);
+    let mut ws = connect_ws(&server.addr, &origin).await;
+    ws.send(Message::Text(
+        msg(
+            "hello",
+            "{\"device_id\":\"d\",\"name\":\"d\",\"user_agent\":\"u\",\"capabilities\":{},\"transport\":\"webrtc\"}",
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim hello");
+    ws.send(Message::Text(
+        msg(
+            "auth",
+            "{\"credential\":{\"token\":\"deadbeefdeadbeefdeadbeefdeadbeef\"}}",
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim auth token");
+    let reply = recv_json(&mut ws).await;
+    assert_eq!(reply["type"], "auth_fail", "balasan: {reply}");
+    assert_eq!(reply["payload"]["code"], "BAD_PIN");
 }
 
 #[tokio::test]

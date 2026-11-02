@@ -139,6 +139,12 @@ impl SourceRegistry {
         self.by_id.remove(id)
     }
 
+    /// Cari sumber berdasarkan token reconnect (B2/B3). Token bersifat rahasia
+    /// (A8); pembandingan dilakukan di sisi server dalam registry.
+    pub fn find_by_token(&self, token: &str) -> Option<&Source> {
+        self.by_id.values().find(|s| s.token == token)
+    }
+
     /// Daftar sumber dalam urutan masuk (untuk switcher 1-6, B7).
     pub fn list(&self) -> Vec<&Source> {
         self.order

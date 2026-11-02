@@ -26,6 +26,8 @@ const NAL_TYPE_IDR: u8 = 5;
 pub struct VideoFrame {
     /// Posisi frame (timestamp RTP 90 kHz).
     pub pts: u32,
+    /// Sequence number RTP pertama frame (B5: pengukuran packet loss).
+    pub seq: u16,
     /// Frame mulai dari IDR (keyframe) — penentu saat ganti sumber (B6).
     pub keyframe: bool,
     /// Byte stream Annex-B: SPS/PPS/IDR siap diterima decoder.
@@ -79,7 +81,7 @@ impl RtpVideoSink {
                             continue;
                         }
                     };
-                    if !acc.push(pts, marker, starts_idr, piece) {
+                    if !acc.push(pts, packet.header.sequence_number, marker, starts_idr, piece) {
                         continue;
                     }
                     let Some(frame) = acc.take() else { continue; };
@@ -98,6 +100,8 @@ impl RtpVideoSink {
 #[derive(Default)]
 struct FrameAssembler {
     pts: u32,
+    /// Sequence number RTP pertama frame (B5: pengukuran packet loss).
+    seq: u16,
     marker: bool,
     keyframe: bool,
     buf: bytes::BytesMut,
@@ -111,6 +115,7 @@ struct FrameAssembler {
 #[derive(Clone)]
 struct StagedNal {
     pts: u32,
+    seq: u16,
     marker: bool,
     starts_idr: bool,
     piece: Bytes,
@@ -118,9 +123,10 @@ struct StagedNal {
 
 impl FrameAssembler {
     /// Tambah NAL; kembalikan `true` saat frame sudah lengkap.
-    fn push(&mut self, pts: u32, marker: bool, starts_idr: bool, piece: Bytes) -> bool {
+    fn push(&mut self, pts: u32, seq: u16, marker: bool, starts_idr: bool, piece: Bytes) -> bool {
         if !self.started {
             self.pts = pts;
+            self.seq = seq;
             self.marker = marker;
             self.keyframe = starts_idr;
             self.buf.clear();
@@ -133,6 +139,7 @@ impl FrameAssembler {
             // frame baru dimulai dengan piece ini.
             self.staged = Some(StagedNal {
                 pts,
+                seq,
                 marker,
                 starts_idr,
                 piece,
@@ -153,6 +160,7 @@ impl FrameAssembler {
         }
         let frame = VideoFrame {
             pts: self.pts,
+            seq: self.seq,
             keyframe: self.keyframe,
             data: self.buf.split().freeze(),
         };
@@ -161,6 +169,7 @@ impl FrameAssembler {
         // Mulai frame baru dari NAL yang ditahan, bila ada.
         if let Some(staged) = self.staged.take() {
             self.pts = staged.pts;
+            self.seq = staged.seq;
             self.marker = staged.marker;
             self.keyframe = staged.starts_idr;
             self.buf.extend_from_slice(&staged.piece);
@@ -191,9 +200,9 @@ mod tests {
     fn assembler_collects_until_marker() {
         let mut a = FrameAssembler::default();
         // NAL pertama dengan marker=false: frame belum lengkap.
-        assert!(!a.push(100, false, false, nal(1, &[1, 2])));
+        assert!(!a.push(100, 2, false, false, nal(1, &[1, 2])));
         // NAL kedua dengan marker=true: frame lengkap.
-        assert!(a.push(100, true, false, nal(1, &[3])));
+        assert!(a.push(100, 1, true, false, nal(1, &[3])));
         let f = a.take().expect("frame harus lengkap");
         assert_eq!(f.pts, 100);
         assert!(!f.keyframe);
@@ -204,9 +213,9 @@ mod tests {
     #[test]
     fn assembler_detects_keyframe() {
         let mut a = FrameAssembler::default();
-        a.push(100, false, true, nal(7, &[9]));
-        a.push(100, false, true, nal(5, &[10]));
-        a.push(100, true, false, nal(5, &[11]));
+        a.push(100, 2, false, true, nal(7, &[9]));
+        a.push(100, 2, false, true, nal(5, &[10]));
+        a.push(100, 1, true, false, nal(5, &[11]));
         let f = a.take().unwrap();
         assert!(f.keyframe);
     }
@@ -214,9 +223,9 @@ mod tests {
     #[test]
     fn pts_jump_without_marker_flushes() {
         let mut a = FrameAssembler::default();
-        a.push(100, false, false, nal(1, &[1]));
+        a.push(100, 2, false, false, nal(1, &[1]));
         // Marker=false tapi pts melompat: frame pertama keluar.
-        assert!(a.push(200, false, false, nal(1, &[2])));
+        assert!(a.push(200, 2, false, false, nal(1, &[2])));
         let f = a.take().unwrap();
         assert_eq!(f.pts, 100);
     }

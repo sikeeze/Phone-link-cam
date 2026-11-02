@@ -26,10 +26,16 @@ fn main() -> phonecam_core::Result<()> {
     std::thread::Builder::new()
         .name("phonecam-server".into())
         .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .expect("gagal membuat runtime server");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!(?e, "gagal membuat runtime server");
+                    return;
+                }
+            };
             rt.block_on(async move {
                 if let Err(e) = phonecam_desktop::serve(state_for_server).await {
                     tracing::error!(?e, "server berhenti dengan error");
@@ -70,9 +76,13 @@ fn wait_for_port(state: &phonecam_desktop::AppState, timeout: std::time::Duratio
 #[cfg(target_os = "windows")]
 fn run_window(port: u16) {
     use tauri::WebviewUrl;
-    let url: tauri::Url = format!("https://localhost:{port}/app")
-        .parse()
-        .expect("URL UI valid");
+    // Format string literal: parse hanya gagal bila port tak valid (tidak
+    // mungkin di sini), tapi tangani tetap agar tidak panic (A11).
+    let Ok(url) = format!("https://localhost:{port}/app").parse() else {
+        tracing::error!("URL UI tidak valid: port {port}");
+        return;
+    };
+    let url: tauri::Url = url;
     let app = tauri::Builder::default().setup(move |app| {
         tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.clone()))
             .title("PhoneCam")

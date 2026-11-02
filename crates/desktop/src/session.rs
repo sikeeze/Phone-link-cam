@@ -10,8 +10,8 @@ use tokio::time::interval;
 use phonecam_core::constants::limits::MAX_MESSAGE_BYTES;
 use phonecam_core::pairing::PinCheck;
 use phonecam_core::protocol::{
-    self, types, AuthCredential, AuthFailCode, AuthFailPayload, HelloPayload, IcePayload,
-    SdpPayload,
+    self, types, AuthCredential, AuthFailCode, AuthFailPayload, CmdQualityPayload, HelloPayload,
+    IcePayload, QualityPreset, SdpPayload,
 };
 use phonecam_core::source::{Source, SourceInfo};
 use phonecam_media::decode::VideoDecoder;
@@ -28,6 +28,33 @@ struct CancelGuard(tokio::sync::watch::Sender<bool>);
 impl Drop for CancelGuard {
     fn drop(&mut self) {
         let _ = self.0.send(true);
+    }
+}
+
+/// Pengukur kualitas per sumber (B5): RTT dari `pong` + loss dari gap
+/// sequence RTP. Interaksi dengan HP hanya lewat `cmd_quality` saat preset
+/// berubah.
+#[derive(Default)]
+pub struct QualityMonitor {
+    state: phonecam_core::quality::QualityState,
+}
+
+impl QualityMonitor {
+    /// Catat RTT (ms) dari `pong`; kembalikan preset bila berubah (B5).
+    pub fn sample_rtt(&mut self, rtt_ms: u32, now_ms: u64) -> Option<QualityPreset> {
+        phonecam_core::quality::sample_rtt(&mut self.state, rtt_ms, now_ms)
+    }
+
+    /// Catat sequence number RTP dari pipeline; hitung gap sebagai loss (B5).
+    pub fn sample_seq(&mut self, seq: u16, now_ms: u64) -> Option<QualityPreset> {
+        phonecam_core::quality::sample_seq(&mut self.state, seq, now_ms)
+    }
+
+    /// Buat payload `cmd_quality` (B4/B5).
+    pub fn payload(&self) -> CmdQualityPayload {
+        CmdQualityPayload {
+            quality: self.state.current,
+        }
     }
 }
 
@@ -49,6 +76,13 @@ pub struct Session {
     ice_rx: Option<tokio::sync::mpsc::UnboundedReceiver<SignalOut>>,
     /// Penerima track video dari peer connection (B6: jalur media).
     track_rx: Option<tokio::sync::mpsc::UnboundedReceiver<std::sync::Arc<dyn TrackRemote>>>,
+    /// True bila HP memutus dengan `bye` eksplisit (B3: langsung CLOSED,
+    /// tidak masuk RECONNECTING).
+    bye_received: bool,
+    /// Pengukur kualitas B5 untuk sumber ini (RTT + loss → cmd_quality).
+    quality: QualityMonitor,
+    /// Penerima sequence number RTP dari pipeline video (B5: pengukuran loss).
+    seq_rx: Option<tokio::sync::mpsc::UnboundedReceiver<u16>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +103,9 @@ impl Session {
             peer: None,
             ice_rx: None,
             track_rx: None,
+            bye_received: false,
+            quality: QualityMonitor::default(),
+            seq_rx: None,
         }
     }
 
@@ -81,6 +118,31 @@ impl Session {
         let mut last_msg = Instant::now();
 
         loop {
+            // B5: konsumsi sequence number RTP yang dilaporkan pipeline video
+            // (pengukuran packet loss). Dipisah dari select! agar hot path
+            // media tidak membanjiri branch select utama.
+            if let Some(seq_rx) = self.seq_rx.as_mut() {
+                while let Ok(seq) = seq_rx.try_recv() {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    if let Some(preset) = self.quality.sample_seq(seq, now) {
+                        let payload = self.quality.payload();
+                        if let Ok(text) = protocol::build(types::CMD_QUALITY, None, Some(&payload))
+                        {
+                            let _ = tx.send(Message::Text(text.into())).await;
+                        }
+                        if let Some(id) = self.source_id.as_deref() {
+                            let mut sources = ctx.sources.write();
+                            if let Some(s) = sources.get_mut(id) {
+                                s.quality = preset;
+                            }
+                        }
+                        tracing::info!(?preset, "kualitas adaptif: packet loss (B5)");
+                    }
+                }
+            }
             tokio::select! {
                 msg = rx.next() => match msg {
                     Some(Ok(Message::Text(text))) => {
@@ -122,10 +184,19 @@ impl Session {
                     if let Some(track_rx) = self.track_rx.as_mut() {
                         while let Ok(track) = track_rx.try_recv() {
                             let ctx2 = ctx.clone();
+                            // B5: pipeline video melaporkan sequence number RTP
+                            // kembali ke session untuk pengukuran packet loss.
+                            let (seq_tx, seq_rx) =
+                                tokio::sync::mpsc::unbounded_channel::<u16>();
+                            if self.seq_rx.is_none() {
+                                self.seq_rx = Some(seq_rx);
+                            }
                             tokio::spawn(async move {
                                 let kind = track.kind().await;
                                 match kind {
-                                    RtpCodecKind::Video => Self::spawn_video(ctx2, track).await,
+                                    RtpCodecKind::Video => {
+                                        Self::spawn_video(ctx2, track, seq_tx).await
+                                    }
                                     RtpCodecKind::Audio => Self::spawn_audio(ctx2, track).await,
                                     _ => {}
                                 }
@@ -289,6 +360,16 @@ impl Session {
                     VerifyOutcome::Ok { source_id, token } => {
                         // B2: reset tracker untuk IP ini setelah berhasil.
                         ctx.rate_limiter.write().reset(ip_addr);
+                        // B3: sumber kembali LIVE (reconnect lewat token) atau
+                        // baru saja pair lewat PIN.
+                        {
+                            let mut sources = ctx.sources.write();
+                            if let Some(s) = sources.get_mut(&source_id) {
+                                s.status.state = phonecam_core::source::SessionStateDefault(
+                                    phonecam_core::session::SessionState::Live,
+                                );
+                            }
+                        }
                         let msg = protocol::build(
                             types::AUTH_OK,
                             None,
@@ -361,7 +442,14 @@ impl Session {
     }
 
     /// Jalankan pipeline video (depacketize -> decode -> vcam, B6).
-    async fn spawn_video(ctx: Arc<AppState>, track: Arc<dyn TrackRemote>) {
+    ///
+    /// `seq_tx` menerima sequence number RTP per frame untuk pengukuran
+    /// packet loss adaptif (B5).
+    async fn spawn_video(
+        ctx: Arc<AppState>,
+        track: Arc<dyn TrackRemote>,
+        seq_tx: tokio::sync::mpsc::UnboundedSender<u16>,
+    ) {
         let vcam = match ctx.vcam_or_start().await {
             Ok(v) => v,
             Err(e) => {
@@ -378,7 +466,7 @@ impl Session {
         };
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let _cancel_guard = CancelGuard(cancel_tx);
-        if let Err(e) = crate::pipeline::run(track, decoder, vcam, cancel_rx).await {
+        if let Err(e) = crate::pipeline::run(track, decoder, vcam, cancel_rx, seq_tx).await {
             tracing::warn!(?e, "pipeline video berakhir dengan error");
         }
     }
@@ -417,7 +505,6 @@ impl Session {
         ip: &str,
         tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     ) -> ControlFlow {
-        let _ = ctx;
         match dec.msg_type.as_str() {
             types::PING => {
                 // B4: ping > pong otomatis.
@@ -426,8 +513,39 @@ impl Session {
                 }
                 ControlFlow::Continue
             }
+            types::PONG => {
+                // B5: RTT dari timestamp envelope `pong` (B4: ts diisi pengirim).
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let rtt = now.saturating_sub(dec.ts);
+                if let Some(preset) = self.quality.sample_rtt(rtt as u32, now) {
+                    // B5: preset berubah → kirim cmd_quality + update state.
+                    let payload = self.quality.payload();
+                    if let Ok(text) = protocol::build(types::CMD_QUALITY, None, Some(&payload)) {
+                        let _ = tx.send(Message::Text(text.into())).await;
+                    }
+                    if let Some(id) = self.source_id.as_deref() {
+                        let mut sources = ctx.sources.write();
+                        if let Some(s) = sources.get_mut(id) {
+                            s.quality = preset;
+                            // B3: DEGRADED saat turun, LIVE saat naik kembali.
+                            let st = if rtt > phonecam_core::quality::thresholds::RTT_MS as u64 {
+                                phonecam_core::session::SessionState::Degraded
+                            } else {
+                                phonecam_core::session::SessionState::Live
+                            };
+                            s.status.state = phonecam_core::source::SessionStateDefault(st);
+                        }
+                    }
+                    tracing::info!(?preset, rtt, "kualitas adaptif (B5)");
+                }
+                ControlFlow::Continue
+            }
             types::BYE => {
                 tracing::info!(ip, "HP memutuskan (bye)");
+                self.bye_received = true;
                 ControlFlow::Break
             }
             types::OFFER => {
@@ -540,10 +658,18 @@ impl Session {
                 Ok(PinCheck::Wrong { .. }) => VerifyOutcome::BadPin,
                 Err(_) => VerifyOutcome::BadPin,
             },
-            AuthCredential::Token(_) => {
-                // ponytail: token reconnect diaktifkan saat UI desktop menyimpan
-                // token per sumber (fase 2). Saat ini token tidak diterima.
-                VerifyOutcome::BadPin
+            AuthCredential::Token(tok) => {
+                // B2/B3: token reconnect valid selama sesi desktop hidup.
+                // Sumber tetap di registry saat WS putus (state RECONNECTING);
+                // token tidak dikenal ditolak sebagai BAD_PIN (B2).
+                let sources = ctx.sources.read();
+                match sources.find_by_token(tok) {
+                    Some(src) => VerifyOutcome::Ok {
+                        source_id: src.id.clone(),
+                        token: src.token.clone(),
+                    },
+                    None => VerifyOutcome::BadPin,
+                }
             }
         }
     }
@@ -572,11 +698,65 @@ impl Session {
                 tracing::debug!(?e, "error menutup peer connection");
             }
         }
-        // B2: hapus sumber dari registry saat WS tertutup (lewat source_id).
-        // Tanpa ini, registry akan terus mengisi slot 6 dan sesi menjadi
-        // permanen penuh setelah 6 koneksi.
+        // B2/B3: sumber ditangani sesuai alasan putus.
         if let Some(id) = self.source_id.take() {
-            ctx.sources.write().remove(&id);
+            if self.bye_received {
+                // `bye` eksplisit:HP menutup sesi sendiri → CLOSED langsung.
+                ctx.sources.write().remove(&id);
+            } else {
+                // WS putus tanpa `bye` (mis. Wi-Fi hilang) → RECONNECTING.
+                // Source tetap di registry; token reconnect masih berlaku
+                // (B2: selama sesi desktop hidup). Anggaran 60 detik dengan
+                // backoff eksponensial (B3); bila habis → CLOSED + hapus.
+                let st = ctx.sources.write().get_mut(&id).map(|s| {
+                    s.status.state = phonecam_core::source::SessionStateDefault(
+                        phonecam_core::session::SessionState::Reconnecting,
+                    )
+                });
+                if st.is_none() {
+                    // Sumber sudah tidak ada (dihapus pihak lain) — selesai.
+                    return;
+                }
+                let ctx2 = ctx.clone();
+                tokio::spawn(async move {
+                    let start = std::time::Instant::now();
+                    let deadline = start
+                        + std::time::Duration::from_secs(
+                            phonecam_core::constants::reconnect::TOTAL_BUDGET_SECS,
+                        );
+                    let mut attempt = 0u32;
+                    // B3: backoff 0.5 s, 1 s, 2 s, 4 s, maks 8 s; total 60 s.
+                    while std::time::Instant::now() < deadline {
+                        let Some(wait_ms) = phonecam_core::session::backoff_delay(
+                            attempt,
+                            start.elapsed().as_millis() as u64,
+                        ) else {
+                            break;
+                        };
+                        tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                        attempt += 1;
+                        // B3: sumber keluar dari RECONNECTING bila HP berhasil
+                        // reconnect lewat token (state Live) atau dihapus.
+                        let still_reconnecting = {
+                            let sources = ctx2.sources.read();
+                            sources
+                                .get(&id)
+                                .map(|s| {
+                                    s.status.state.0
+                                        == phonecam_core::session::SessionState::Reconnecting
+                                })
+                                .unwrap_or(false)
+                        };
+                        if !still_reconnecting {
+                            return;
+                        }
+                    }
+                    // Anggaran habis: tutup sesi sumber (B3).
+                    if ctx2.sources.write().remove(&id).is_some() {
+                        tracing::info!(%id, "reconnect timeout; sumber ditutup (B3)");
+                    }
+                });
+            }
         }
     }
 }

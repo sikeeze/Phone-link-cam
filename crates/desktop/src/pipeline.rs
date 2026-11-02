@@ -26,6 +26,7 @@ pub async fn run(
     mut decoder: Box<dyn VideoDecoder>,
     vcam: Arc<dyn VCam>,
     cancel: tokio::sync::watch::Receiver<bool>,
+    seq_tx: tokio::sync::mpsc::UnboundedSender<u16>,
 ) -> phonecam_core::Result<()> {
     // Channel frame: batas antrian 2 frame (B6 ring buffer kecil), pesan
     // lengkap selalu diambil paling baru.
@@ -53,6 +54,10 @@ pub async fn run(
                 continue;
             }
         };
+
+        // B5: laporkan sequence number ke session (pengukuran packet loss).
+        // Pengiriman gagal hanya bila session sudah selesai — diabaikan.
+        let _ = seq_tx.send(frame.seq);
 
         // B6: ukuran output vcam konstan (1280x720). MF decoder dinegosiasikan
         // ke NV12 dengan ukuran stream; ponytail: scaling ke geometry target

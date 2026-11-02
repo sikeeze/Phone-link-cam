@@ -352,6 +352,8 @@ pub type RawPayload = BTreeMap<String, serde_json::Value>;
 pub struct DecodedMessage {
     /// Nilai field `type`.
     pub msg_type: String,
+    /// Timestamp UNIX ms dari envelope (B4; dipakai pengukuran RTT, B5).
+    pub ts: u64,
     /// Nilai field `payload` bila ada.
     pub payload: Option<RawPayload>,
 }
@@ -374,6 +376,7 @@ pub fn parse_message(text: &str) -> Result<DecodedMessage> {
     }
     Ok(DecodedMessage {
         msg_type: msg.msg_type,
+        ts: msg.ts,
         payload: msg.payload,
     })
 }
