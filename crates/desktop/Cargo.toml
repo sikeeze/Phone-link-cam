@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "PhoneCam desktop app: server HTTPS pairing + signaling (Phase 0)"
+description = "PhoneCam desktop app: server HTTPS pairing + signaling (Phase 1)"
 
 [[bin]]
 name = "phonecam-desktop"
@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 phonecam-core = { workspace = true }
-phonecam-rtc = { workspace = true }
+phonecam-rtc = { version = "0.1.0", path = "../rtc" }
 phonecam-media = { workspace = true }
 phonecam-vcam = { workspace = true }
 phonecam-vmic = { workspace = true }
@@ -47,3 +47,4 @@ rust-embed = { workspace = true }
 clap = { workspace = true }
 url = { workspace = true }
 local-ip-address = { workspace = true }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }

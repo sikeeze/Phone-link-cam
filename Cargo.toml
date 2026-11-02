@@ -34,7 +34,7 @@ futures = "0.3"
 # TLS / certificates (self-signed untuk prototipe, lihat docs/adr/0001)
 rustls = "0.23"
 tokio-rustls = "0.26"
-rcgen = "0.14"
+rcgen = { version = "0.14", features = ["pem"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

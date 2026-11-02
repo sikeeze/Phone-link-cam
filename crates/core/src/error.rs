@@ -42,7 +42,7 @@ impl UserErrorCode {
             ),
             UserErrorCode::Locked => (
                 "Terlalu banyak percobaan",
-                " kamu sudah salah memasukkan PIN 5 kali.",
+                "Kamu sudah salah memasukkan PIN 5 kali.",
                 "Tunggu 60 detik lalu coba lagi.",
             ),
             UserErrorCode::Expired => (

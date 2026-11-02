@@ -74,12 +74,6 @@ pub struct SourceStatus {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct SessionStateDefault(pub SessionState);
 
-impl Default for SessionState {
-    fn default() -> Self {
-        SessionState::Idle
-    }
-}
-
 /// Peran sumber: aktif (di-decode penuh) atau preview (resolusi kecil) (B6, fase 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -113,18 +107,10 @@ impl Source {
 }
 
 /// Registry sumber untuk sesi desktop (B2: maks 6).
+#[derive(Default)]
 pub struct SourceRegistry {
     by_id: HashMap<SourceId, Source>,
     order: Vec<SourceId>,
-}
-
-impl Default for SourceRegistry {
-    fn default() -> Self {
-        Self {
-            by_id: HashMap::new(),
-            order: Vec::new(),
-        }
-    }
 }
 
 impl SourceRegistry {

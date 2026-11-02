@@ -13,15 +13,15 @@ export const MsgType = {
   AUTH_FAIL: "auth_fail",
   OFFER: "offer",
   ANSWER: "answer",
-  CANDIDATE: "candidate",
-  SOURCE_ADD: "source_add",
+  ICE: "ice",
   SOURCE_UPDATE: "source_update",
-  SOURCE_REMOVE: "source_remove",
+  CMD_QUALITY: "cmd_quality",
+  CMD_KEYFRAME: "cmd_keyframe",
   CMD_CAMERA: "cmd_camera",
   CMD_ROLE: "cmd_role",
-  CMD_KEYFRAME: "cmd_keyframe",
+  PING: "ping",
+  PONG: "pong",
   BYE: "bye",
-  ERROR: "error",
 } as const;
 
 export type MsgTypeValue = (typeof MsgType)[keyof typeof MsgType];
@@ -42,7 +42,7 @@ export interface Capabilities {
   webcodecs: boolean;
 }
 
-export type Transport = "web-rtc" | "ws-webcodecs";
+export type Transport = "webrtc" | "ws-webcodecs";
 
 /** Payload `hello` (HP > PC, B4). */
 export interface HelloPayload {
@@ -53,9 +53,7 @@ export interface HelloPayload {
   transport: Transport;
 }
 
-export type AuthCredential =
-  | { kind: "pin"; pin: string }
-  | { kind: "token"; token: string };
+export type AuthCredential = { pin: string } | { token: string };
 
 /** Payload `auth` (HP > PC, B4). */
 export interface AuthPayload {
@@ -75,9 +73,14 @@ export interface AuthFailPayload {
   retry_after?: number;
 }
 
+/** Preset kualitas (B5). Cerminan phonecam-core::protocol::QualityPreset. */
+export type QualityPreset = "saving" | "balanced" | "high" | "smooth" | "preview";
+
 /** Payload `auth_ok` (PC > HP, B4). Token untuk reconnect. */
 export interface AuthOkPayload {
+  source_id: string;
   token: string;
+  quality: QualityPreset;
 }
 
 /** Payload `offer`/`answer` (B4). */
@@ -87,8 +90,8 @@ export interface SdpPayload {
   source_id?: string;
 }
 
-/** Payload `candidate` (B4). */
-export interface CandidatePayload {
+/** Payload `ice` (B4). */
+export interface IcePayload {
   candidate: string;
   sdp_mline_index: number;
   sdp_mid?: string;
@@ -97,13 +100,6 @@ export interface CandidatePayload {
 
 export type CameraFacing = "front" | "back";
 
-/** Payload `source_add` (HP > PC, B4). */
-export interface SourceAddPayload {
-  source_id: string;
-  label: string;
-  facing: CameraFacing;
-}
-
 /** Payload `source_update` (HP > PC, B4). */
 export interface SourceUpdatePayload {
   source_id: string;
@@ -111,9 +107,4 @@ export interface SourceUpdatePayload {
   zoom?: number;
   battery_level?: number;
   thermal?: "normal" | "fair" | "serious" | "critical";
-}
-
-/** Payload `source_remove` (HP > PC, B4). */
-export interface SourceRemovePayload {
-  source_id: string;
 }

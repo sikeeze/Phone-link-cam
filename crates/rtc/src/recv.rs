@@ -1,22 +1,35 @@
 //! Penerima media per transport (B4: `webrtc` atau `ws-webcodecs`).
-//!
-//! Fase 0: kerangka. Implementasi WebRTC (webrtc-rs/str0m) dan WebSocket
-//! biner + decode H.264 untuk mode ADB (B9.2) diisi saat fase berjalan.
 
 #![allow(dead_code)]
 
-use crate::{MediaReceiver, ReceiverConfig, ReceiverStats};
 use phonecam_core::protocol::Transport;
 
+use crate::{MediaReceiver, ReceiverConfig, ReceiverStats};
+
+/// Perintah signaling yang harus dikirim ke HP lewat WebSocket (B4).
+pub enum SignalOut {
+    /// Balasan SDP (answer) untuk offer dari HP.
+    Answer { sdp: String },
+    /// Kandidat ICE lokal (trickle).
+    Ice { candidate: String },
+}
+
 /// Penerima WebRTC (Wi-Fi, tethering, hotspot; B1).
+///
+/// Desktop bertindak sebagai answerer: HP membuat offer (getUserMedia),
+/// desktop membalas answer. Kandidat ICE ditukar bolak-balik lewat `ice`.
 pub struct WebRtcReceiver {
-    #[allow(unused)]
     config: ReceiverConfig,
 }
 
 impl WebRtcReceiver {
     pub fn new(config: ReceiverConfig) -> Self {
         Self { config }
+    }
+
+    /// UDP port range untuk ICE (B1: 40000-40100).
+    pub fn udp_range(&self) -> (u16, u16) {
+        self.config.udp_range
     }
 }
 

@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn fill_crops_instead_of_letterboxing() {
         let cfg = CompositorConfig::default();
-        let g = target_geometry(&req(640, 480, cfg.clone()));
+        let g = target_geometry(&req(640, 480, cfg));
         assert_eq!(g, (960, 720)); // fit
         let mut fill_cfg = cfg;
         fill_cfg.fit = crate::FitMode::Fill;
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn rotate_90_swaps_dimensions() {
         let cfg = CompositorConfig::default();
-        let mut r = req(1280, 720, cfg.clone());
+        let mut r = req(1280, 720, cfg);
         r.config.rotate = 90;
         let g = target_geometry(&r);
         assert_eq!(g, (720, 1280));

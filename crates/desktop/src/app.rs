@@ -11,6 +11,7 @@ use phonecam_core::pairing::PairingManager;
 use phonecam_core::security::PinRateLimiter;
 use phonecam_core::settings::Settings;
 use phonecam_core::source::SourceRegistry;
+use phonecam_vcam::VCam;
 
 /// State global aplikasi (dibagikan ke semua handler).
 pub struct AppState {
@@ -22,6 +23,8 @@ pub struct AppState {
     pub rate_limiter: RwLock<PinRateLimiter>,
     /// Registri sumber HP (B2: maks 6).
     pub sources: RwLock<SourceRegistry>,
+    /// Virtual camera aktif (B6: satu output global; None bila belum aktif).
+    pub vcam: RwLock<Option<std::sync::Arc<dyn VCam>>>,
 }
 
 impl AppState {
@@ -31,7 +34,28 @@ impl AppState {
             pairing: PairingManager::new(now_secs()),
             rate_limiter: RwLock::new(PinRateLimiter::new()),
             sources: RwLock::new(SourceRegistry::default()),
+            vcam: RwLock::new(None),
         }
+    }
+
+    /// Aktifkan virtual camera bila belum aktif (B2: VCAM_NOT_INSTALLED
+    /// bila backend tidak terpasang). Mengembalikan handle yang sama untuk
+    /// semua pemanggil.
+    pub async fn vcam_or_start(&self) -> phonecam_core::Result<std::sync::Arc<dyn VCam>> {
+        if let Some(v) = self.vcam.read().clone() {
+            return Ok(v);
+        }
+        let backend = phonecam_vcam::platform_backend();
+        let format = phonecam_vcam::VCamFormat {
+            width: 1280,
+            height: 720,
+            fps: 30,
+            pixel_format: phonecam_vcam::VCamPixelFormat::Nv12,
+        };
+        backend.start(format).await?;
+        let v: std::sync::Arc<dyn VCam> = std::sync::Arc::from(backend);
+        *self.vcam.write() = Some(v.clone());
+        Ok(v)
     }
 }
 

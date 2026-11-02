@@ -13,3 +13,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }
 bytes = { workspace = true }
+virtualcam = "1.0.0"
+
+[dev-dependencies]
+tokio = { workspace = true }

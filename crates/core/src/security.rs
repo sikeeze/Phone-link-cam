@@ -62,7 +62,7 @@ impl OriginPolicy {
             OriginPolicy::Lan => {
                 // Origin harus https dan host-nya cocok dengan Host header (B2).
                 match (parse_origin_host(origin), host) {
-                    (Some((scheme, ohost)), Some(h)) => scheme == "https" && host_eq(&ohost, h),
+                    (Some((scheme, ohost)), Some(h)) => scheme == "https" && host_eq(ohost, h),
                     _ => false,
                 }
             }
@@ -136,6 +136,15 @@ impl PinRateLimiter {
     /// True jika `ip` sedang dikunci (B2).
     pub fn is_locked(&self, input: IpAddr, now: i64) -> bool {
         self.by_ip.get(&input).is_some_and(|t| t.is_locked(now))
+    }
+
+    /// Sisa detik hingga kunci `ip` berakhir; None bila tidak terkunci (B2:
+    /// `retryAfter` harus berisi waktu tunggu nyata, bukan konstan 60).
+    pub fn retry_after(&self, input: IpAddr, now: i64) -> Option<u32> {
+        self.by_ip
+            .get(&input)
+            .and_then(|t| t.retry_after(now))
+            .map(|secs| secs as u32)
     }
 
     /// Reset tracker untuk `ip` setelah PIN benar.
@@ -232,6 +241,19 @@ mod tests {
         ));
         assert!(rl.is_locked(ip, 0));
         assert!(!rl.is_locked(ip, 61));
+    }
+
+    #[test]
+    fn retry_after_reports_remaining_lock_time() {
+        // B2: retryAfter adalah sisa waktu kunci, bukan konstan 60.
+        let mut rl = PinRateLimiter::new();
+        let ip: IpAddr = "192.168.1.50".parse().unwrap();
+        for _ in 0..5 {
+            rl.record_wrong(ip, 100);
+        }
+        assert_eq!(rl.retry_after(ip, 100), Some(60));
+        assert_eq!(rl.retry_after(ip, 130), Some(30));
+        assert_eq!(rl.retry_after(ip, 160), None);
     }
 
     #[test]

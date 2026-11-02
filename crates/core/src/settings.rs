@@ -235,7 +235,7 @@ mod tests {
         s.network.https_port = 9443;
         s.save(&p).unwrap();
         let back = Settings::load_or_default(&p).unwrap();
-        assert_eq!(back.video.mirror, true);
+        assert!(back.video.mirror);
         assert_eq!(back.network.https_port, 9443);
         let _ = std::fs::remove_file(&p);
     }

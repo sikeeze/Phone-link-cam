@@ -7,8 +7,20 @@
 
 use phonecam_core::protocol::Transport;
 
+/// Rentang UDP media (B1: 40000-40100). Inklusif di kedua ujung.
+pub const UDP_MEDIA_RANGE_START: u16 = 40_000;
+pub const UDP_MEDIA_RANGE_END: u16 = 40_100;
+/// Iterator port UDP media (B1).
+pub const UDP_MEDIA_RANGE: std::ops::RangeInclusive<u16> =
+    UDP_MEDIA_RANGE_START..=UDP_MEDIA_RANGE_END;
+
 pub mod jitter;
+pub mod peer;
+pub mod pipeline;
 pub mod recv;
+
+/// Re-export agar konsumen (desktop) tidak perlu dependensi webrtc langsung.
+pub use webrtc::media_stream::track_remote::TrackRemote;
 
 /// Konfigurasi penerima WebRTC per sumber (B1/B5).
 #[derive(Debug, Clone)]
@@ -52,4 +64,18 @@ pub trait MediaReceiver: Send + Sync {
     fn transport(&self) -> Transport;
     /// Statistik terbaru (B5/B9.1).
     fn stats(&self) -> ReceiverStats;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receiver_config_udp_range_default() {
+        // B1: rentang UDP media 40000-40100.
+        let c = ReceiverConfig::default();
+        assert_eq!(c.udp_range, (40000, 40100));
+        assert!(c.host_candidates_only);
+        assert!(c.resolve_mdns);
+    }
 }

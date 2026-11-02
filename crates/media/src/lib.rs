@@ -1,9 +1,14 @@
 //! PhoneCam media: decode, scaler, compositor, switcher (README B6).
-#![allow(dead_code)] // kerangka: diisi oleh fase berikutnya
-#![forbid(unsafe_code)]
+#![allow(dead_code)]
+// kerangka: diisi oleh fase berikutnya
+// Pengecualian decode_win.rs: binding COM Media Foundation unsafe (A9 longgar
+// untuk decoder, sama kesepakatan awal).
+#![cfg_attr(not(target_os = "windows"), forbid(unsafe_code))]
 
 pub mod compositor;
 pub mod decode;
+#[cfg(target_os = "windows")]
+pub mod decode_win;
 pub mod switcher;
 
 /// Format pixel output ke virtual camera (B6: NV12 atau YUY2 sesuai backend).

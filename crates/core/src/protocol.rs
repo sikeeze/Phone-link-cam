@@ -103,12 +103,13 @@ pub struct Capabilities {
 
 /// Jalur transport media (B4 `transport`, B9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
 pub enum Transport {
     /// WebRTC + DTLS-SRTP lewat UDP (Wi-Fi, tethering, hotspot).
     #[default]
+    #[serde(rename = "webrtc")]
     WebRtc,
     /// WebSocket + WebCodecs H.264 (mode ADB; adb reverse hanya TCP).
+    #[serde(rename = "ws-webcodecs")]
     WsWebCodecs,
 }
 
@@ -346,8 +347,18 @@ pub struct ByePayload {
 /// Peta payload mentah: pesan tidak dikenal tetap bisa dilihat isinya pada level debug.
 pub type RawPayload = BTreeMap<String, serde_json::Value>;
 
-/// Parse pesan mentah menjadi (type, payload mentah). Memvalidasi versi dan ukuran.
-pub fn parse_raw(text: &str) -> Result<(String, Option<RawPayload>)> {
+/// Hasil decode pesan masuk: tipe + payload mentah (B4).
+#[derive(Debug, Clone)]
+pub struct DecodedMessage {
+    /// Nilai field `type`.
+    pub msg_type: String,
+    /// Nilai field `payload` bila ada.
+    pub payload: Option<RawPayload>,
+}
+
+/// Decode pesan mentah (B4). Memvalidasi versi protokol dan ukuran.
+/// Payload di-verify lewat `payload_from_value` oleh pemakai.
+pub fn parse_message(text: &str) -> Result<DecodedMessage> {
     if text.len() > MAX_MESSAGE_BYTES {
         return Err(Error::MessageTooLarge {
             limit: MAX_MESSAGE_BYTES,
@@ -361,7 +372,10 @@ pub fn parse_raw(text: &str) -> Result<(String, Option<RawPayload>)> {
             msg.v
         )));
     }
-    Ok((msg.msg_type, msg.payload))
+    Ok(DecodedMessage {
+        msg_type: msg.msg_type,
+        payload: msg.payload,
+    })
 }
 
 /// Buat pesan siap kirim dengan payload terserialize.
@@ -369,6 +383,24 @@ pub fn build<T: Serialize>(
     msg_type: &str,
     id: Option<&str>,
     payload: Option<&T>,
+) -> Result<String> {
+    build_at(msg_type, id, payload, now_ms())
+}
+
+/// Timestamp UNIX ms (B4: diisi oleh pengirim).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Varian `build` dengan timestamp eksplisit (untuk pengujian).
+pub fn build_at<T: Serialize>(
+    msg_type: &str,
+    id: Option<&str>,
+    payload: Option<&T>,
+    ts: u64,
 ) -> Result<String> {
     let payload_json = match payload {
         Some(p) => Some(serde_json::to_value(p).map_err(|e| Error::protocol(e.to_string()))?),
@@ -378,7 +410,7 @@ pub fn build<T: Serialize>(
         v: PROTOCOL_VERSION,
         msg_type: msg_type.to_string(),
         id: id.map(str::to_string),
-        ts: 0,
+        ts,
         payload: payload_json,
     };
     let text = serde_json::to_string(&msg).map_err(|e| Error::protocol(e.to_string()))?;
@@ -415,11 +447,11 @@ mod tests {
             transport: Transport::WebRtc,
         };
         let text = build(types::HELLO, None, Some(&hello)).unwrap();
-        let (t, p) = parse_raw(&text).unwrap();
-        assert_eq!(t, types::HELLO);
-        let p = p.expect("payload ada");
+        let m = parse_message(&text).unwrap();
+        assert_eq!(m.msg_type, types::HELLO);
+        let p = m.payload.expect("payload ada");
         assert_eq!(p["device_id"], "abc123");
-        assert_eq!(p["transport"], "web-rtc");
+        assert_eq!(p["transport"], "webrtc");
         assert_eq!(p["capabilities"]["zoom"], true);
     }
 
@@ -430,9 +462,9 @@ mod tests {
             retry_after: Some(60),
         };
         let text = build(types::AUTH_FAIL, None, Some(&fail)).unwrap();
-        let (t, p) = parse_raw(&text).unwrap();
-        assert_eq!(t, types::AUTH_FAIL);
-        let p = p.expect("payload ada");
+        let m = parse_message(&text).unwrap();
+        assert_eq!(m.msg_type, types::AUTH_FAIL);
+        let p = m.payload.expect("payload ada");
         assert_eq!(p["code"], "LOCKED");
         assert_eq!(p["retry_after"], 60);
         let decoded: AuthFailPayload =
@@ -446,22 +478,22 @@ mod tests {
         // Pesan tidak dikenal harus bisa di-parse strukturnya, tetapi pemakai
         // crate ini yang memutuskan mengabaikannya (B4: diabaikan + log debug).
         let text = r#"{"v":1,"type":"future_msg","ts":123}"#;
-        let (t, p) = parse_raw(text).unwrap();
-        assert_eq!(t, "future_msg");
-        assert!(p.is_none());
+        let m = parse_message(text).unwrap();
+        assert_eq!(m.msg_type, "future_msg");
+        assert!(m.payload.is_none());
     }
 
     #[test]
     fn wrong_version_rejected() {
         let text = r#"{"v":2,"type":"hello","ts":1}"#;
-        assert!(parse_raw(text).is_err());
+        assert!(parse_message(text).is_err());
     }
 
     #[test]
     fn message_over_limit_rejected() {
         let big = "x".repeat(MAX_MESSAGE_BYTES + 1);
         let text = format!(r#"{{"v":1,"type":"hello","ts":1,"payload":{{"x":"{big}"}}}}"#);
-        let err = parse_raw(&text).unwrap_err();
+        let err = parse_message(&text).unwrap_err();
         assert!(matches!(err, Error::MessageTooLarge { .. }));
     }
 
@@ -475,6 +507,22 @@ mod tests {
             AuthCredential::Token("abcd".into()).redact(),
             "token:<redacted>"
         );
+    }
+
+    #[test]
+    fn build_fills_sender_timestamp_b4() {
+        // B4: `ts` diisi oleh pengirim, bukan 0.
+        let text = build::<()>(types::PING, None, None).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let ts = v["ts"].as_u64().expect("ts harus angka ms");
+        assert!(ts > 0, "ts harus terisi epoch ms, dapat {ts}");
+    }
+
+    #[test]
+    fn build_at_sets_explicit_timestamp() {
+        let text = build_at::<()>(types::PONG, None, None, 123).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["ts"].as_u64(), Some(123));
     }
 
     #[test]

@@ -122,6 +122,36 @@ pub fn classify_subnet(addr: &Ipv4Addr) -> InterfaceKind {
     }
 }
 
+/// Pilih IP bind untuk peer connection WebRTC menuju HP tertentu (B1).
+///
+/// Mencari antarmuka privat lokal yang berada satu subnet /24 dengan `peer`
+/// (kasus LAN umum). Jika tidak ada yang cocok, kembalikan IP privat pertama
+/// yang bisa di-bind; kalau itu pun tidak ada, kembalikan 127.0.0.1 agar
+/// tetap berfungsi dalam mode ADB/uji.
+pub fn bind_ip_for_peer(peer: &IpAddr) -> IpAddr {
+    let ifas = match list_private_interfaces() {
+        Ok(v) => v,
+        Err(_) => return IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+    };
+    let all: Vec<IpAddr> = ifas.iter().flat_map(|i| i.addrs.clone()).collect();
+    if let IpAddr::V4(p) = peer {
+        let po = p.octets();
+        // Ponytail: asumsi /24 (LAN rumah dan tethering umumnya /24).
+        // Subnet lain tetap bekerja lewat fallback di bawah.
+        if let Some(m) = all.iter().find(|a| match **a {
+            IpAddr::V4(l) => {
+                l.octets()[0] == po[0] && l.octets()[1] == po[1] && l.octets()[2] == po[2]
+            }
+            _ => false,
+        }) {
+            return *m;
+        }
+    }
+    all.into_iter()
+        .find(|a| matches!(a, IpAddr::V4(v) if !v.is_loopback()))
+        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+}
+
 /// Alamat listen untuk server HTTPS: bind ke semua antarmuka privat (B1).
 /// Mengembalikan daftar SocketAddr per IP privat.
 pub fn https_bind_addrs(port: u16) -> Result<Vec<SocketAddr>> {
@@ -202,5 +232,21 @@ mod tests {
         // Pada mesin uji umumnya ada loopback dan minimal satu antarmuka.
         let ifas = list_private_interfaces();
         assert!(ifas.is_ok(), "{ifas:?}");
+    }
+
+    #[test]
+    fn bind_ip_for_peer_returns_bindable_private() {
+        // Mode ADB: HP di 127.0.0.1 → fallback ke IP privat non-loopback
+        // atau 127.0.0.1 jika tidak ada antarmuka lain.
+        let b = bind_ip_for_peer(&"127.0.0.1".parse::<IpAddr>().unwrap());
+        assert!(is_bindable(&b), "{b:?} harus private");
+    }
+
+    #[test]
+    fn bind_ip_for_peer_error_falls_back_to_loopback() {
+        // IP publik yang tidak cocok subnet mana pun tetap harus memberikan
+        // IP yang bisa di-bind (B1), bukan panic.
+        let b = bind_ip_for_peer(&"8.8.8.8".parse::<IpAddr>().unwrap());
+        assert!(is_bindable(&b), "{b:?} harus private");
     }
 }

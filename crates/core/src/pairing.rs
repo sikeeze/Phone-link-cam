@@ -207,6 +207,12 @@ impl PinAttemptTracker {
         self.lock_out_at(now).is_some()
     }
 
+    /// Sisa detik hingga kunci berakhir; None bila tidak terkunci (B2).
+    pub fn retry_after(&self, now: i64) -> Option<i64> {
+        let unlock = self.lock_out_at(now)?;
+        Some(unlock.saturating_sub(now))
+    }
+
     /// UNIX epoch detik kapan kunci berakhir; None jika tidak terkunci.
     fn lock_out_at(&self, now: i64) -> Option<i64> {
         let locked_at = self.locked_at?;

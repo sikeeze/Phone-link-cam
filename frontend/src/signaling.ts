@@ -33,8 +33,17 @@ export class Signaling {
       this.closed = false;
       const ws = new WebSocket(this.url);
       this.ws = ws;
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error(`gagal membuka WebSocket ke ${this.url}`));
+      let settled = false;
+      ws.onopen = () => {
+        settled = true;
+        resolve();
+      };
+      ws.onerror = () => {
+        if (!settled) {
+          settled = true;
+          reject(new Error(`gagal membuka WebSocket ke ${this.url}`));
+        }
+      };
       ws.onmessage = (ev) => this.dispatch(ev.data);
       ws.onclose = () => {
         if (!this.closed) {
@@ -50,7 +59,11 @@ export class Signaling {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket belum terbuka");
     }
-    const msg: WireMessage = { v: PROTOCOL_VERSION, type };
+    const msg: WireMessage = {
+      v: PROTOCOL_VERSION,
+      type,
+      ts: Date.now(),
+    };
     if (payload !== undefined) {
       msg.payload = payload;
     }

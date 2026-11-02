@@ -63,7 +63,21 @@ export function PairingScreen({ onPaired }: Props) {
         const m = FAIL_MESSAGES[code] ?? FAIL_MESSAGES.BAD_PIN;
         setError(`${m.title}. ${m.hint}`);
       });
-      sig.send(MsgType.AUTH, { credential: { kind: "pin", pin } });
+      // B4: hello dulu, baru auth. Credential = externally-tagged enum:
+      // {"pin": "..."} atau {"token": "..."}.
+      sig.send(MsgType.HELLO, {
+        device_id: "phone-web",
+        name: "HP Web",
+        user_agent: navigator.userAgent,
+        capabilities: {
+          zoom: false,
+          torch: false,
+          camera_switch: false,
+          webcodecs: false,
+        },
+        transport: "webrtc",
+      });
+      sig.send(MsgType.AUTH, { credential: { pin } });
     } catch (e) {
       setConnecting(false);
       setError(`Tidak bisa terhubung ke PC: ${String(e)}`);

@@ -9,9 +9,10 @@ use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 /// State sesi per sumber (B3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionState {
+    #[default]
     Idle,
     Authenticating,
     Connecting,
