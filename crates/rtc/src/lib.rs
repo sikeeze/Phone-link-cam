@@ -14,12 +14,14 @@ pub const UDP_MEDIA_RANGE_END: u16 = 40_100;
 pub const UDP_MEDIA_RANGE: std::ops::RangeInclusive<u16> =
     UDP_MEDIA_RANGE_START..=UDP_MEDIA_RANGE_END;
 
+pub mod audio_sink;
 pub mod jitter;
 pub mod peer;
 pub mod pipeline;
 pub mod recv;
 
-/// Re-export agar konsumen (desktop) tidak perlu dependensi webrtc langsung.
+/// Re-export agar konsumen (desktop) tidak perlu dependensi webrtc/rtc langsung.
+pub use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
 pub use webrtc::media_stream::track_remote::TrackRemote;
 
 /// Konfigurasi penerima WebRTC per sumber (B1/B5).

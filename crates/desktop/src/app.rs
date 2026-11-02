@@ -12,6 +12,7 @@ use phonecam_core::security::PinRateLimiter;
 use phonecam_core::settings::Settings;
 use phonecam_core::source::SourceRegistry;
 use phonecam_vcam::VCam;
+use phonecam_vmic::{VMic, VMicFormat};
 
 /// State global aplikasi (dibagikan ke semua handler).
 pub struct AppState {
@@ -28,6 +29,8 @@ pub struct AppState {
     pub https_port: RwLock<Option<u16>>,
     /// Virtual camera aktif (B6: satu output global; None bila belum aktif).
     pub vcam: RwLock<Option<std::sync::Arc<dyn VCam>>>,
+    /// Virtual mic aktif (B6: satu output global; None bila belum aktif).
+    pub vmic: RwLock<Option<std::sync::Arc<dyn VMic>>>,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             sources: RwLock::new(SourceRegistry::default()),
             https_port: RwLock::new(None),
             vcam: RwLock::new(None),
+            vmic: RwLock::new(None),
         }
     }
 
@@ -59,6 +63,19 @@ impl AppState {
         backend.start(format).await?;
         let v: std::sync::Arc<dyn VCam> = std::sync::Arc::from(backend);
         *self.vcam.write() = Some(v.clone());
+        Ok(v)
+    }
+
+    /// Aktifkan virtual mic bila belum aktif (B6: satu output global;
+    /// VMIC_NOT_INSTALLED bila perangkat input virtual tidak ada).
+    pub async fn vmic_or_start(&self) -> phonecam_core::Result<std::sync::Arc<dyn VMic>> {
+        if let Some(v) = self.vmic.read().clone() {
+            return Ok(v);
+        }
+        let backend = phonecam_vmic::platform_backend();
+        backend.start(VMicFormat::default()).await?;
+        let v: std::sync::Arc<dyn VMic> = std::sync::Arc::from(backend);
+        *self.vmic.write() = Some(v.clone());
         Ok(v)
     }
 }

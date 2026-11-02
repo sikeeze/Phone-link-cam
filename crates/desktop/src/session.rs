@@ -15,9 +15,10 @@ use phonecam_core::protocol::{
 };
 use phonecam_core::source::{Source, SourceInfo};
 use phonecam_media::decode::VideoDecoder;
+use phonecam_rtc::audio_sink::RtpAudioSink;
 use phonecam_rtc::peer::Peer;
 use phonecam_rtc::recv::SignalOut;
-use phonecam_rtc::TrackRemote;
+use phonecam_rtc::{RtpCodecKind, TrackRemote};
 
 use crate::app::{now_secs, AppState};
 
@@ -116,39 +117,17 @@ impl Session {
                         let mut rl = ctx.rate_limiter.write();
                         rl.sweep(now_secs());
                     }
-                    // B6: bila track video dari HP sudah sampai, jalankan
-                    // pipeline media (depacketize -> decode -> vcam) satu kali.
+                    // B6: bila track dari HP sudah sampai, jalankan pipeline
+                    // media satu kali (video -> decode -> vcam; audio -> vmic).
                     if let Some(track_rx) = self.track_rx.as_mut() {
                         while let Ok(track) = track_rx.try_recv() {
                             let ctx2 = ctx.clone();
                             tokio::spawn(async move {
-                                let vcam = match ctx2.vcam_or_start().await {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        tracing::warn!(?e, "gagal memulai vcam untuk sumber");
-                                        return;
-                                    }
-                                };
-                                let decoder: Box<dyn VideoDecoder> =
-                                    match phonecam_media::decode_win::MfDecoder::new() {
-                                        Ok(d) => Box::new(d),
-                                        Err(e) => {
-                                            tracing::warn!(?e, "dekoder MF tidak tersedia");
-                                            return;
-                                        }
-                                    };
-                                let (cancel_tx, cancel_rx) =
-                                    tokio::sync::watch::channel(false);
-                                let _cancel_guard = CancelGuard(cancel_tx);
-                                if let Err(e) = crate::pipeline::run(
-                                    track,
-                                    decoder,
-                                    vcam,
-                                    cancel_rx,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(?e, "pipeline media berakhir dengan error");
+                                let kind = track.kind().await;
+                                match kind {
+                                    RtpCodecKind::Video => Self::spawn_video(ctx2, track).await,
+                                    RtpCodecKind::Audio => Self::spawn_audio(ctx2, track).await,
+                                    _ => {}
                                 }
                             });
                         }
@@ -379,6 +358,55 @@ impl Session {
                 ControlFlow::Continue
             }
         }
+    }
+
+    /// Jalankan pipeline video (depacketize -> decode -> vcam, B6).
+    async fn spawn_video(ctx: Arc<AppState>, track: Arc<dyn TrackRemote>) {
+        let vcam = match ctx.vcam_or_start().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(?e, "gagal memulai vcam untuk sumber");
+                return;
+            }
+        };
+        let decoder: Box<dyn VideoDecoder> = match phonecam_media::decode_win::MfDecoder::new() {
+            Ok(d) => Box::new(d),
+            Err(e) => {
+                tracing::warn!(?e, "dekoder MF tidak tersedia");
+                return;
+            }
+        };
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let _cancel_guard = CancelGuard(cancel_tx);
+        if let Err(e) = crate::pipeline::run(track, decoder, vcam, cancel_rx).await {
+            tracing::warn!(?e, "pipeline video berakhir dengan error");
+        }
+    }
+
+    /// Jalankan pipeline audio (Opus -> PCM -> vmic, B6).
+    async fn spawn_audio(ctx: Arc<AppState>, track: Arc<dyn TrackRemote>) {
+        let vmic = match ctx.vmic_or_start().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(?e, "gagal memulai vmic untuk sumber");
+                return;
+            }
+        };
+        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(8);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let _cancel_guard = CancelGuard(cancel_tx);
+        let sink = tokio::spawn(async move {
+            if let Err(e) = RtpAudioSink::run(track, frame_tx, cancel_rx).await {
+                tracing::warn!(?e, "sink audio berakhir dengan error");
+            }
+        });
+        while let Some(frame) = frame_rx.recv().await {
+            if let Err(e) = vmic.push_pcm(&frame.pcm).await {
+                tracing::warn!(?e, "vmic push gagal");
+                break;
+            }
+        }
+        let _ = sink.await;
     }
 
     /// Fase LIVE: pesan signaling media (B4).

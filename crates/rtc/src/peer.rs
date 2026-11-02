@@ -81,16 +81,21 @@ impl Peer {
                 .map_err(|e| Error::internal(format!("gagal membuat peer connection: {e}")))?,
         );
 
-        // B4: video recv-only; audio menyusul di fase 2.
-        pc.add_transceiver_from_kind(
+        // B4: video + audio recv-only (audio fase 2, B6 Opus 48 kHz mono).
+        for kind in [
             rtc::rtp_transceiver::rtp_sender::RtpCodecKind::Video,
-            Some(RTCRtpTransceiverInit {
-                direction: RTCRtpTransceiverDirection::Recvonly,
-                ..Default::default()
-            }),
-        )
-        .await
-        .map_err(|e| Error::internal(format!("gagal menambah transceiver: {e}")))?;
+            rtc::rtp_transceiver::rtp_sender::RtpCodecKind::Audio,
+        ] {
+            pc.add_transceiver_from_kind(
+                kind,
+                Some(RTCRtpTransceiverInit {
+                    direction: RTCRtpTransceiverDirection::Recvonly,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|e| Error::internal(format!("gagal menambah transceiver: {e}")))?;
+        }
 
         Ok(Self { pc })
     }

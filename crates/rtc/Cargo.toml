@@ -26,3 +26,4 @@ webrtc = { version = "0.21.1", default-features = false, features = [
     "crypto-aws-lc-rs",
 ] }
 rtc = { version = "0.21.1", default-features = false }
+opus1 = "0.3.0"
