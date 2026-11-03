@@ -10,12 +10,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::Path;
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
-use axum::extract::Path;
 use axum::response::Response;
+use axum::routing::{get, post};
 use axum::Router;
 
 use phonecam_core::net::list_private_interfaces;
@@ -131,6 +131,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/source/{id}/active", post(api_source_active))
         // B6: ganti nama perangkat dari menu kartu kamera.
         .route("/api/source/{id}/rename", post(api_source_rename))
+        // B6: minta keyframe sebelum penggantian sumber aktif.
+        .route("/api/source/{id}/keyframe", post(api_source_keyframe))
 }
 
 /// `GET /` — halaman pairing PWA (B1).
@@ -283,7 +285,7 @@ async fn api_pin_regenerate(State(state): State<Arc<AppState>>) -> axum::Json<se
 async fn api_source_active(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Response {
+) -> axum::response::Response {
     let demoted = {
         let mut sources = state.sources.write();
         if sources.get(&id).is_none() {
@@ -291,6 +293,27 @@ async fn api_source_active(
         }
         sources.set_active(&id)
     };
+    // B6: minta keyframe dari sumber baru sebelum mengganti (maks 500 ms)
+    // agar vcam tidak menampilkan frame beku/glitch saat penggantian.
+    // Bind dulu: temporary guard parking_lot pada scrutinee `if let` hidup
+    // sampai akhir blok (non-Send saat .await).
+    let tx_cmd = state.session_cmds.read().get(&id).cloned();
+    if let Some(tx_cmd) = tx_cmd {
+        let payload = phonecam_core::protocol::CmdKeyframePayload {
+            source_id: id.clone(),
+        };
+        if let Ok(text) = phonecam_core::protocol::build(
+            phonecam_core::protocol::types::CMD_KEYFRAME,
+            None,
+            Some(&payload),
+        ) {
+            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+            state.keyframe_waits.write().insert(id.clone(), ack_tx);
+            let _ = tx_cmd.send(text);
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), ack_rx).await;
+            state.keyframe_waits.write().remove(&id);
+        }
+    }
     // B6: kabari kedua HP soal peran barunya (active/preview menentukan
     // resolusi kamera; B5: preview memakai resolusi rendah).
     let payload = phonecam_core::protocol::CmdRolePayload {
@@ -318,6 +341,54 @@ async fn api_source_active(
         }
     }
     (axum::http::StatusCode::NO_CONTENT, "").into_response()
+}
+
+/// `POST /api/source/{id}/keyframe` — minta frame kunci dari HP (B6).
+///
+/// Mengirim `cmd_keyframe` lalu menunggu `keyframe_ready` paling lama
+/// 500 ms (B6: switcher menunggu keyframe maks setengah detik).
+async fn api_source_keyframe(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let source = {
+        let sources = state.sources.read();
+        if sources.get(&id).is_none() {
+            return (axum::http::StatusCode::NOT_FOUND, "sumber tidak ditemukan").into_response();
+        }
+        sources.get(&id).cloned()
+    };
+    let _ = source; // validasi saja; pengiriman lewatRegistry sudah dicek.
+    let payload = phonecam_core::protocol::CmdKeyframePayload {
+        source_id: id.clone(),
+    };
+    let Ok(text) = phonecam_core::protocol::build(
+        phonecam_core::protocol::types::CMD_KEYFRAME,
+        None,
+        Some(&payload),
+    ) else {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "gagal build pesan",
+        )
+            .into_response();
+    };
+    let tx_cmd = state.session_cmds.read().get(&id).cloned();
+    let Some(tx_cmd) = tx_cmd else {
+        return (axum::http::StatusCode::CONFLICT, "HP tidak terhubung").into_response();
+    };
+    // B6: pasang penunggu ack sebelum kirim (race: ack belum sampai).
+    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel::<()>();
+    state.keyframe_waits.write().insert(id.clone(), ack_tx);
+    let _ = tx_cmd.send(text);
+    match tokio::time::timeout(std::time::Duration::from_millis(500), ack_rx).await {
+        Ok(Ok(())) => (axum::http::StatusCode::NO_CONTENT, "").into_response(),
+        _ => {
+            // Timeout/hangup: anggap siap (keyframe alami berikutnya dipakai).
+            state.keyframe_waits.write().remove(&id);
+            (axum::http::StatusCode::ACCEPTED, "").into_response()
+        }
+    }
 }
 
 /// `POST /api/source/{id}/rename` — ganti nama perangkat (B6).

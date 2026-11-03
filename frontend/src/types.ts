@@ -17,6 +17,7 @@ export const MsgType = {
   SOURCE_UPDATE: "source_update",
   CMD_QUALITY: "cmd_quality",
   CMD_KEYFRAME: "cmd_keyframe",
+  KEYFRAME_READY: "keyframe_ready",
   CMD_CAMERA: "cmd_camera",
   CMD_ROLE: "cmd_role",
   PING: "ping",

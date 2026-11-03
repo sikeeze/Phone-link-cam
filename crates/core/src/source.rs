@@ -254,10 +254,7 @@ mod tests {
         r.insert(src("s1")).unwrap();
         r.insert(src("s2")).unwrap();
         assert_eq!(r.active().map(|s| s.id.as_str()), Some("s1"));
-        assert_eq!(
-            r.get("s2").map(|s| s.role),
-            Some(SourceRole::Preview)
-        );
+        assert_eq!(r.get("s2").map(|s| s.role), Some(SourceRole::Preview));
     }
 
     #[test]
@@ -269,10 +266,7 @@ mod tests {
         let demoted = r.set_active("s2");
         assert_eq!(demoted.as_deref(), Some("s1"));
         assert_eq!(r.active().map(|s| s.id.as_str()), Some("s2"));
-        assert_eq!(
-            r.get("s1").map(|s| s.role),
-            Some(SourceRole::Preview)
-        );
+        assert_eq!(r.get("s1").map(|s| s.role), Some(SourceRole::Preview));
     }
 
     #[test]

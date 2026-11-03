@@ -36,6 +36,8 @@ pub struct AppState {
     /// Pengirim perintah keluar ke sesi HP yang sedang terhubung, per
     /// source_id (B6/B7: cmd_role, cmd_camera, cmd_keyframe dari UI desktop).
     pub session_cmds: RwLock<HashMap<SourceId, tokio::sync::mpsc::UnboundedSender<String>>>,
+    /// Penunggu ack keyframe per source_id (B6: switch tunggu maks 500 ms).
+    pub keyframe_waits: RwLock<HashMap<SourceId, tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl AppState {
@@ -49,6 +51,7 @@ impl AppState {
             vcam: RwLock::new(None),
             vmic: RwLock::new(None),
             session_cmds: RwLock::new(HashMap::new()),
+            keyframe_waits: RwLock::new(HashMap::new()),
         }
     }
 

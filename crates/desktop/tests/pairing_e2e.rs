@@ -187,8 +187,10 @@ Connection: close
     tls.read_to_end(&mut buf).await.expect("read");
     let body = String::from_utf8_lossy(&buf).into_owned();
     let status = body
-        .split("
-")
+        .split(
+            "
+",
+        )
         .next()
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|s| s.parse::<u16>().ok())

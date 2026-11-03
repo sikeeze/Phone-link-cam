@@ -555,6 +555,22 @@ impl Session {
                 }
                 ControlFlow::Continue
             }
+            types::KEYFRAME_READY => {
+                // B6: HP melapor keyframe siap -> lepaskan penunggu endpoint.
+                let sid = (dec
+                    .payload
+                    .as_ref()
+                    .and_then(|p| p.get("source_id"))
+                    .and_then(|v| v.as_str()))
+                .map(|s| s.to_string())
+                .or_else(|| self.source_id.clone());
+                if let Some(sid) = sid {
+                    if let Some(wait) = ctx.keyframe_waits.write().remove(&sid) {
+                        let _ = wait.send(());
+                    }
+                }
+                ControlFlow::Continue
+            }
             types::PONG => {
                 // B5: RTT dari timestamp envelope `pong` (B4: ts diisi pengirim).
                 let now = std::time::SystemTime::now()
@@ -744,10 +760,14 @@ impl Session {
                 tracing::debug!(?e, "error menutup peer connection");
             }
         }
-        let was_active_id = self
-            .source_id
-            .as_deref()
-            .and_then(|id| ctx.sources.read().get(id).map(|s| (s.role == phonecam_core::protocol::SourceRole::Active, id.to_string())));
+        let was_active_id = self.source_id.as_deref().and_then(|id| {
+            ctx.sources.read().get(id).map(|s| {
+                (
+                    s.role == phonecam_core::protocol::SourceRole::Active,
+                    id.to_string(),
+                )
+            })
+        });
         // B2/B3: sumber ditangani sesuai alasan putus.
         if let Some(id) = self.source_id.take() {
             if self.bye_received {
@@ -819,26 +839,33 @@ impl Session {
     async fn promote_fallback(ctx: &Arc<AppState>, id: &str) {
         let promoted = {
             let sources = ctx.sources.read();
-            if sources.get(id).map(|s| s.role)
-                != Some(phonecam_core::protocol::SourceRole::Active)
+            if sources.get(id).map(|s| s.role) != Some(phonecam_core::protocol::SourceRole::Active)
             {
                 return;
             }
             sources
                 .list()
                 .into_iter()
-                .find(|s| s.id != id && s.status.state.0 == phonecam_core::session::SessionState::Live)
+                .find(|s| {
+                    s.id != id && s.status.state.0 == phonecam_core::session::SessionState::Live
+                })
                 .map(|s| s.id.clone())
         };
         let Some(promoted) = promoted else { return };
         let demoted = ctx.sources.write().set_active(&promoted);
         tracing::info!(?promoted, "fallback: sumber aktif lain dinaikkan (B6)");
-        let mut cmds = vec![(promoted.clone(), phonecam_core::protocol::SourceRole::Active)];
+        let mut cmds = vec![(
+            promoted.clone(),
+            phonecam_core::protocol::SourceRole::Active,
+        )];
         if let Some(d) = demoted {
             cmds.push((d, phonecam_core::protocol::SourceRole::Preview));
         }
         for (sid, role) in cmds {
-            let payload = phonecam_core::protocol::CmdRolePayload { source_id: sid.clone(), role };
+            let payload = phonecam_core::protocol::CmdRolePayload {
+                source_id: sid.clone(),
+                role,
+            };
             if let Ok(text) = protocol::build(types::CMD_ROLE, None, Some(&payload)) {
                 let _ = ctx.session_cmds.read().get(&sid).map(|tx| tx.send(text));
             }

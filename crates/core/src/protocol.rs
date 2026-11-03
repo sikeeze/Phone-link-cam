@@ -77,6 +77,7 @@ pub mod types {
     pub const AUTH_FAIL: &str = "auth_fail";
     pub const CMD_QUALITY: &str = "cmd_quality";
     pub const CMD_KEYFRAME: &str = "cmd_keyframe";
+    pub const KEYFRAME_READY: &str = "keyframe_ready";
     pub const CMD_CAMERA: &str = "cmd_camera";
     pub const CMD_ROLE: &str = "cmd_role";
     // Dua arah
@@ -335,6 +336,20 @@ pub enum SourceRole {
 pub struct CmdRolePayload {
     pub source_id: String,
     pub role: SourceRole,
+}
+
+/// Payload `cmd_keyframe` (PC > HP, B6): minta frame kunci berikutnya
+/// sebelum penggantian sumber aktif agar tidak ada frame beku/glitch.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CmdKeyframePayload {
+    pub source_id: String,
+}
+
+/// Payload `keyframe_ready` (HP > PC, B6): frame kunci sudah dikirim;
+/// `ts` envelope dipakai PC untuk menghitung waktu tunggu.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyframeReadyPayload {
+    pub source_id: String,
 }
 
 /// Payload `bye` (dua arah).

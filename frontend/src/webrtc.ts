@@ -20,6 +20,7 @@ export class CameraPeer {
     sig.on(MsgType.ICE, (msg) => this.onRemoteIce(msg));
     sig.on(MsgType.CMD_ROLE, (msg) => this.onCmdRole(msg));
     sig.on(MsgType.CMD_CAMERA, (msg) => this.onCmdCamera(msg));
+    sig.on(MsgType.CMD_KEYFRAME, (msg) => this.onCmdKeyframe(msg));
   }
 
   /**
@@ -121,6 +122,19 @@ export class CameraPeer {
         .applyConstraints({ advanced: [{ zoom: p.zoom } as MediaTrackConstraintSet] })
         .catch((e) => console.warn("gagal terapkan zoom", e));
     }
+  }
+
+  /** `cmd_keyframe` dari PC (B6): persiapan penggantian sumber aktif.
+   *
+   * ponytail: browser tidak punya API untuk memaksa encoder mengirim frame
+   * kunci sesuai permintaan (PLI/FIR); kita balas `keyframe_ready` sebagai
+   * sinkronisasi switch — encoder WebRTC memancarkan IDR berkala alami,
+   * jadi jeda singkat ini cukup untuk MVP. Ganti ke PLI eksplisit saat
+   * backend desktop menulis RTCP langsung.
+   */
+  private onCmdKeyframe(msg: WireMessage): void {
+    const sourceId = (msg.payload as { source_id?: string } | null)?.source_id;
+    this.sig.trySend(MsgType.KEYFRAME_READY, sourceId ? { source_id: sourceId } : {});
   }
 
   /** Track video aktif (untuk torch/zoom B5). */
