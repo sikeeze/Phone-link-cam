@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 
-import type { Signaling } from "../signaling";
+import type { Signaling, ConnStatus } from "../signaling";
 import { MsgType, type CameraFacing } from "../types";
 import { CameraPeer } from "../webrtc";
+import { useBattery, useWakeLock, useSignalBar } from "../hooks";
+import { ReconnectOverlay } from "./ReconnectOverlay";
 
 interface Props {
   path?: string;
@@ -23,8 +25,23 @@ export function CameraScreen({ signaling }: Props) {
   const [torchOn, setTorchOn] = useState(false);
   const [status, setStatus] = useState("Menghubungkan…");
   const [facing, setFacing] = useState<CameraFacing>("back");
+  const [connStatus, setConnStatus] = useState<ConnStatus | null>(null);
+  const [overlayVisible, setOverlayVisible] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const peerRef = useRef<CameraPeer | null>(null);
+  const hideTimer = useRef<number | null>(null);
+
+  // D4: indikator baterai + sinyal; Wake Lock aktif selama siaran.
+  const { level: batteryLevel, charging } = useBattery();
+  const signalBars = useSignalBar();
+  const wakeLockOn = useWakeLock(connStatus?.kind === "connected");
+  // D4: tampilkan petunjuk bila halaman masuk background (wake lock lepas).
+  const [backgrounded, setBackgrounded] = useState(false);
+  useEffect(() => {
+    const onVis = () => setBackgrounded(document.visibilityState !== "visible");
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   useEffect(() => {
     if (!signaling) {
@@ -48,11 +65,43 @@ export function CameraScreen({ signaling }: Props) {
       });
     signaling.on(MsgType.BYE, () => setStatus("PC memutuskan koneksi"));
 
+    // B3: status koneksi dari signaling -> overlay reconnect (D5).
+    signaling.onStatus((cs) => {
+      setConnStatus(cs);
+      if (cs.kind === "connected") {
+        setStatus("Siaran aktif");
+      } else if (cs.kind === "reconnecting") {
+        setStatus("Menghubungkan ulang…");
+      } else if (cs.kind === "closed") {
+        setStatus("Koneksi terputus");
+      }
+    });
+
     return () => {
       peer.close();
       peerRef.current = null;
     };
   }, [signaling]);
+
+  // D4: kirim level baterai ke PC lewat source_update (B2/D3).
+  useEffect(() => {
+    if (batteryLevel === null || !signaling) return;
+    signaling.trySend(MsgType.SOURCE_UPDATE, { battery_level: batteryLevel });
+  }, [batteryLevel, signaling]);
+
+  // D4: overlay auto-hide 3 detik, muncul saat disentuh.
+  const showOverlay = () => {
+    setOverlayVisible(true);
+    if (hideTimer.current !== null) clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setOverlayVisible(false), 3000);
+  };
+
+  useEffect(() => {
+    showOverlay();
+    return () => {
+      if (hideTimer.current !== null) clearTimeout(hideTimer.current);
+    };
+  }, []);
 
   /** Beralih kamera depan/belakang (B5: facingMode). */
   const flipCamera = () => {
@@ -87,12 +136,38 @@ export function CameraScreen({ signaling }: Props) {
   };
 
   return (
-    <main class="screen camera-screen">
+    <main
+      class="screen camera-screen"
+      onTouchStart={showOverlay}
+      onClick={showOverlay}
+    >
       <video autoplay playsinline muted ref={videoRef} />
       <div class="status-bar">
         <span class="status">{status}</span>
+        <span class="indicators" aria-hidden="false">
+          {batteryLevel !== null && (
+            <span class="battery" title={charging ? "Mengisi daya" : "Baterai"}>
+              {charging ? "âš¡" : ""}
+              {Math.round(batteryLevel * 100)}%
+            </span>
+          )}
+          <span class="signal" title={`Sinyal ${signalBars}/4`}>
+            {"▂".repeat(signalBars)}
+            <span class="signal-off">{"▂".repeat(4 - signalBars)}</span>
+          </span>
+        </span>
       </div>
-      <div class="controls">
+      <ReconnectOverlay
+        status={connStatus}
+        onRetry={() => signaling?.retryManually()}
+      />
+      {backgrounded && (
+        <div class="overlay wake-hint" role="status">
+          <p>Tetap buka halaman ini agar siaran tidak terhenti.</p>
+          <p class="muted">Wake Lock {wakeLockOn ? "aktif" : "lepas"}.</p>
+        </div>
+      )}
+      <div class="controls" hidden={!overlayVisible}>
         <button
           type="button"
           class={torchOn ? "active" : ""}
