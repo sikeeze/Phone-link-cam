@@ -18,6 +18,8 @@ export class CameraPeer {
     this.sig = sig;
     sig.on(MsgType.ANSWER, (msg) => this.onAnswer(msg));
     sig.on(MsgType.ICE, (msg) => this.onRemoteIce(msg));
+    sig.on(MsgType.CMD_ROLE, (msg) => this.onCmdRole(msg));
+    sig.on(MsgType.CMD_CAMERA, (msg) => this.onCmdCamera(msg));
   }
 
   /**
@@ -78,6 +80,46 @@ export class CameraPeer {
       await this.pc.addIceCandidate({ candidate });
     } catch (e) {
       console.warn("kandidat ICE ditolak", e);
+    }
+  }
+
+  /** `cmd_role` dari PC (B6): aktif = resolusi penuh, preview = rendah. */
+  private onCmdRole(msg: WireMessage): void {
+    const role = (msg.payload as { role?: "active" | "preview" } | null)?.role;
+    if (role !== "active" && role !== "preview") return;
+    const track = this.stream?.getVideoTracks()[0];
+    if (!track) return;
+    // B5/B6: preview memakai resolusi rendah (hemat baterai + bandwidth),
+    // aktif kembali ke resolusi penuh. Ganti constraint tidak perlu
+    // renegosiasi SDP (facingMode/width lewat applyConstraints).
+    const width = role === "preview" ? 320 : 1280;
+    const height = role === "preview" ? 180 : 720;
+    track
+      .applyConstraints({ width: { ideal: width }, height: { ideal: height } })
+      .catch((e) => console.warn("gagal terapkan resolusi role", e));
+  }
+
+  /** `cmd_camera` dari PC (B6): kontrol jarak jauh facing/torch/zoom. */
+  private onCmdCamera(msg: WireMessage): void {
+    const p = msg.payload as {
+      facing?: CameraFacing;
+      torch?: boolean;
+      zoom?: number;
+    } | null;
+    if (!p) return;
+    const track = this.stream?.getVideoTracks()[0];
+    if (p.facing) {
+      void this.flip(p.facing).catch((e) => console.warn("gagal ganti kamera", e));
+    }
+    if (track && typeof p.torch === "boolean") {
+      track
+        .applyConstraints({ advanced: [{ torch: p.torch } as MediaTrackConstraintSet] })
+        .catch((e) => console.warn("gagal terapkan torch", e));
+    }
+    if (track && typeof p.zoom === "number") {
+      track
+        .applyConstraints({ advanced: [{ zoom: p.zoom } as MediaTrackConstraintSet] })
+        .catch((e) => console.warn("gagal terapkan zoom", e));
     }
   }
 

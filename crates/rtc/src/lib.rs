@@ -22,7 +22,7 @@ pub mod recv;
 
 /// Re-export agar konsumen (desktop) tidak perlu dependensi webrtc/rtc langsung.
 pub use rtc::rtp_transceiver::rtp_sender::RtpCodecKind;
-pub use webrtc::media_stream::track_remote::TrackRemote;
+pub use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 
 /// Konfigurasi penerima WebRTC per sumber (B1/B5).
 #[derive(Debug, Clone)]

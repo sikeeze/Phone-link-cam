@@ -101,7 +101,8 @@ impl Source {
             status: SourceStatus::default(),
             token,
             quality: QualityPreset::Balanced,
-            role: SourceRole::Active,
+            // B6: default preview; sumber pertama dijadikan aktif saat pair.
+            role: SourceRole::Preview,
         }
     }
 }
@@ -121,6 +122,11 @@ impl SourceRegistry {
         }
         if !self.by_id.contains_key(&source.id) {
             self.order.push(source.id.clone());
+        }
+        // B6: sumber pertama otomatis menjadi aktif (fallback awal).
+        let mut source = source;
+        if !self.by_id.values().any(|s| s.role == SourceRole::Active) {
+            source.role = SourceRole::Active;
         }
         self.by_id.insert(source.id.clone(), source);
         Ok(())
@@ -143,6 +149,27 @@ impl SourceRegistry {
     /// (A8); pembandingan dilakukan di sisi server dalam registry.
     pub fn find_by_token(&self, token: &str) -> Option<&Source> {
         self.by_id.values().find(|s| s.token == token)
+    }
+
+    /// Tandai sumber sebagai aktif; sumber aktif lain diturunkan ke
+    /// preview (B6: tepat satu aktif). Mengembalikan ID sumber yang
+    /// diturunkan (untuk pengiriman `cmd_role`).
+    pub fn set_active(&mut self, id: &str) -> Option<SourceId> {
+        let mut demoted = None;
+        for s in self.by_id.values_mut() {
+            if s.id == id {
+                s.role = SourceRole::Active;
+            } else if s.role == SourceRole::Active {
+                s.role = SourceRole::Preview;
+                demoted = Some(s.id.clone());
+            }
+        }
+        demoted
+    }
+
+    /// Sumber aktif saat ini (B6; bisa None bila semua preview/putus).
+    pub fn active(&self) -> Option<&Source> {
+        self.by_id.values().find(|s| s.role == SourceRole::Active)
     }
 
     /// Daftar sumber dalam urutan masuk (untuk switcher 1-6, B7).
@@ -219,6 +246,33 @@ mod tests {
         }
         let names: Vec<_> = r.list().into_iter().map(|s| s.id.clone()).collect();
         assert_eq!(names, vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn first_source_becomes_active() {
+        let mut r = SourceRegistry::default();
+        r.insert(src("s1")).unwrap();
+        r.insert(src("s2")).unwrap();
+        assert_eq!(r.active().map(|s| s.id.as_str()), Some("s1"));
+        assert_eq!(
+            r.get("s2").map(|s| s.role),
+            Some(SourceRole::Preview)
+        );
+    }
+
+    #[test]
+    fn set_active_demotes_previous() {
+        let mut r = SourceRegistry::default();
+        for id in ["s1", "s2", "s3"] {
+            r.insert(src(id)).unwrap();
+        }
+        let demoted = r.set_active("s2");
+        assert_eq!(demoted.as_deref(), Some("s1"));
+        assert_eq!(r.active().map(|s| s.id.as_str()), Some("s2"));
+        assert_eq!(
+            r.get("s1").map(|s| s.role),
+            Some(SourceRole::Preview)
+        );
     }
 
     #[test]

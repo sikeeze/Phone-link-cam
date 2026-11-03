@@ -10,7 +10,9 @@ use parking_lot::RwLock;
 use phonecam_core::pairing::PairingManager;
 use phonecam_core::security::PinRateLimiter;
 use phonecam_core::settings::Settings;
-use phonecam_core::source::SourceRegistry;
+use std::collections::HashMap;
+
+use phonecam_core::source::{SourceId, SourceRegistry};
 use phonecam_vcam::VCam;
 use phonecam_vmic::{VMic, VMicFormat};
 
@@ -31,6 +33,9 @@ pub struct AppState {
     pub vcam: RwLock<Option<std::sync::Arc<dyn VCam>>>,
     /// Virtual mic aktif (B6: satu output global; None bila belum aktif).
     pub vmic: RwLock<Option<std::sync::Arc<dyn VMic>>>,
+    /// Pengirim perintah keluar ke sesi HP yang sedang terhubung, per
+    /// source_id (B6/B7: cmd_role, cmd_camera, cmd_keyframe dari UI desktop).
+    pub session_cmds: RwLock<HashMap<SourceId, tokio::sync::mpsc::UnboundedSender<String>>>,
 }
 
 impl AppState {
@@ -43,6 +48,7 @@ impl AppState {
             https_port: RwLock::new(None),
             vcam: RwLock::new(None),
             vmic: RwLock::new(None),
+            session_cmds: RwLock::new(HashMap::new()),
         }
     }
 

@@ -19,4 +19,6 @@ export interface SourceRow {
   state: string;
   battery: number | null;
   rtt_ms: number | null;
+  /** Peran sumber (B6): "active" | "preview". */
+  role: "active" | "preview";
 }

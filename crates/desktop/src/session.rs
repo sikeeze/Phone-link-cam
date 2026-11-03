@@ -79,6 +79,8 @@ pub struct Session {
     /// True bila HP memutus dengan `bye` eksplisit (B3: langsung CLOSED,
     /// tidak masuk RECONNECTING).
     bye_received: bool,
+    /// Penerima perintah dari UI desktop (cmd_role, cmd_camera, cmd_keyframe; B6/B7).
+    cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     /// Pengukur kualitas B5 untuk sumber ini (RTT + loss → cmd_quality).
     quality: QualityMonitor,
     /// Penerima sequence number RTP dari pipeline video (B5: pengukuran loss).
@@ -101,6 +103,7 @@ impl Session {
             source_id: None,
             pending_hello: None,
             peer: None,
+            cmd_rx: None,
             ice_rx: None,
             track_rx: None,
             bye_received: false,
@@ -172,6 +175,14 @@ impl Session {
                     }
                     None => break,
                 },
+                // B6/B7: perintah dari UI desktop diteruskan ke HP.
+                Some(text) = async {
+                    match self.cmd_rx.as_mut() { Some(rx) => rx.recv().await, None => None }
+                }, if self.cmd_rx.is_some() => {
+                    if tx.send(Message::Text(text.into())).await.is_err() {
+                        break;
+                    }
+                },
                 _ = tick.tick() => {
                     // B2: bersihkan tracker IP yang lock-nya sudah berakhir
                     // (mencegah by_ip HashMap tumbuh tanpa batas).
@@ -191,11 +202,12 @@ impl Session {
                             if self.seq_rx.is_none() {
                                 self.seq_rx = Some(seq_rx);
                             }
+                            let source_id = self.source_id.clone();
                             tokio::spawn(async move {
                                 let kind = track.kind().await;
                                 match kind {
                                     RtpCodecKind::Video => {
-                                        Self::spawn_video(ctx2, track, seq_tx).await
+                                        Self::spawn_video(ctx2, source_id, track, seq_tx).await
                                     }
                                     RtpCodecKind::Audio => Self::spawn_audio(ctx2, track).await,
                                     _ => {}
@@ -278,7 +290,7 @@ impl Session {
         }
     }
 
-    /// Fase AUTH: hanya `hello` lalu `auth` (B4).
+    /// Lepas pendaftaran channel perintah bila source_id masih terdaftar (B6).
     async fn handle_auth(
         &mut self,
         dec: &protocol::DecodedMessage,
@@ -406,6 +418,10 @@ impl Session {
                         }
                         // B2: catat source_id milik koneksi ini; dipakai cleanup
                         // saat WS tutup agar slot ke-6 tidak bocor.
+                        // B6/B7: pasang channel perintah dari UI desktop.
+                        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                        ctx.session_cmds.write().insert(source_id.clone(), cmd_tx);
+                        self.cmd_rx = Some(cmd_rx);
                         self.source_id = Some(source_id);
                         self.state = SessionPhase::Live;
                         ControlFlow::Continue
@@ -447,9 +463,35 @@ impl Session {
     /// packet loss adaptif (B5).
     async fn spawn_video(
         ctx: Arc<AppState>,
+        source_id: Option<String>,
         track: Arc<dyn TrackRemote>,
         seq_tx: tokio::sync::mpsc::UnboundedSender<u16>,
     ) {
+        // B6: hanya sumber aktif yang di-decode ke output vcam. Track
+        // non-aktif tetap dibaca (RTP terus di-drain) tanpa decode; peran
+        // aktif ditangani lewat cmd_role saat pengguna mengganti.
+        let is_active = match source_id.as_deref() {
+            Some(id) => ctx
+                .sources
+                .read()
+                .get(id)
+                .map(|s| s.role == phonecam_core::protocol::SourceRole::Active)
+                .unwrap_or(false),
+            None => true,
+        };
+        if !is_active {
+            // B6: sumber preview — RTP hanya di-drain agar buffer HP/dua arah
+            // tidak menumpuk; tidak ada decode (CPU hanya untuk sumber aktif).
+            tracing::info!("track video non-aktif di-drain tanpa decode (B6)");
+            loop {
+                let Some(event) = track.poll().await else {
+                    return;
+                };
+                let phonecam_rtc::TrackRemoteEvent::OnRtpPacket(_) = event else {
+                    continue;
+                };
+            }
+        }
         let vcam = match ctx.vcam_or_start().await {
             Ok(v) => v,
             Err(e) => {
@@ -692,12 +734,20 @@ impl Session {
             return;
         }
         self.state = SessionPhase::Closed;
+        // B6/B7: lepas pendaftaran channel perintah (HP tidak lagi terhubung).
+        if let Some(id) = self.source_id.as_deref() {
+            ctx.session_cmds.write().remove(id);
+        }
         // B4: tutup peer connection (stop driver UDP/DTLS).
         if let Some(peer) = self.peer.take() {
             if let Err(e) = peer.close().await {
                 tracing::debug!(?e, "error menutup peer connection");
             }
         }
+        let was_active_id = self
+            .source_id
+            .as_deref()
+            .and_then(|id| ctx.sources.read().get(id).map(|s| (s.role == phonecam_core::protocol::SourceRole::Active, id.to_string())));
         // B2/B3: sumber ditangani sesuai alasan putus.
         if let Some(id) = self.source_id.take() {
             if self.bye_received {
@@ -756,6 +806,41 @@ impl Session {
                         tracing::info!(%id, "reconnect timeout; sumber ditutup (B3)");
                     }
                 });
+            }
+        }
+        // B6: fallback sumber aktif (promosi sumber live lain).
+        if let Some((true, id)) = was_active_id {
+            Self::promote_fallback(ctx, &id).await;
+        }
+    }
+
+    /// B6: naikkan sumber live lain menjadi aktif bila sumber aktif pergi;
+    /// kirim `cmd_role` ke HP yang bersangkutan.
+    async fn promote_fallback(ctx: &Arc<AppState>, id: &str) {
+        let promoted = {
+            let sources = ctx.sources.read();
+            if sources.get(id).map(|s| s.role)
+                != Some(phonecam_core::protocol::SourceRole::Active)
+            {
+                return;
+            }
+            sources
+                .list()
+                .into_iter()
+                .find(|s| s.id != id && s.status.state.0 == phonecam_core::session::SessionState::Live)
+                .map(|s| s.id.clone())
+        };
+        let Some(promoted) = promoted else { return };
+        let demoted = ctx.sources.write().set_active(&promoted);
+        tracing::info!(?promoted, "fallback: sumber aktif lain dinaikkan (B6)");
+        let mut cmds = vec![(promoted.clone(), phonecam_core::protocol::SourceRole::Active)];
+        if let Some(d) = demoted {
+            cmds.push((d, phonecam_core::protocol::SourceRole::Preview));
+        }
+        for (sid, role) in cmds {
+            let payload = phonecam_core::protocol::CmdRolePayload { source_id: sid.clone(), role };
+            if let Ok(text) = protocol::build(types::CMD_ROLE, None, Some(&payload)) {
+                let _ = ctx.session_cmds.read().get(&sid).map(|tx| tx.send(text));
             }
         }
     }

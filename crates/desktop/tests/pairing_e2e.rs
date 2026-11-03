@@ -163,6 +163,39 @@ async fn https_get(addr: &SocketAddr, path: &str) -> (u16, String) {
     (status, body)
 }
 
+/// POST HTTPS dengan body JSON; kembalikan (status, body).
+async fn https_post(addr: &SocketAddr, path: &str, body: &str) -> (u16, String) {
+    let connector = tokio_rustls::TlsConnector::from(tls_client_config());
+    let tcp = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("TCP connect");
+    let domain = ServerName::try_from("127.0.0.1").expect("domain valid");
+    let mut tls = connector.connect(domain, tcp).await.expect("TLS connect");
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let req = format!(
+        "POST {path} HTTP/1.1
+Host: {addr}
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{body}",
+        body.len()
+    );
+    tls.write_all(req.as_bytes()).await.expect("write");
+    let mut buf = Vec::new();
+    tls.read_to_end(&mut buf).await.expect("read");
+    let body = String::from_utf8_lossy(&buf).into_owned();
+    let status = body
+        .split("
+")
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    (status, body)
+}
+
 // --- harness ---------------------------------------------------------------
 
 /// Server uji: router produksi di 127.0.0.1:0 (port acak, loopback).
@@ -551,10 +584,7 @@ async fn token_unknown_rejected_as_bad_pin() {
 
 #[tokio::test]
 async fn qr_endpoint_serves_svg_with_pairing_url() {
-    // B2: /qr mengembalikan SVG yang berisi URL pairing + PIN aktif.
-    // QRSVG men-encode data sebagai modul (path), bukan teks polos —
-    // verifikasi dengan membuat ulang QR untuk URL yang diharapkan dan
-    // membandingkan dimensi + jumlah modul gelap (cukup unik per data).
+    // QR harus memuat URL pairing lengang (B2): skema HTTPS + IP + PIN.
     let server = TestServer::start().await;
     let (status, body) = https_get(&server.addr, "/qr").await;
     assert_eq!(status, 200, "QR harus dilayani: {body}");
@@ -568,9 +598,7 @@ async fn qr_endpoint_serves_svg_with_pairing_url() {
     // Bandingkan dengan QR referensi untuk URL yang sama.
     let url = format!("https://{}/?pin={}", server.addr, server.pin());
     let ref_code = qrcode::QrCode::new(url.as_bytes()).expect("QR referensi");
-    // Renderer default svg: modul 8×8 + quiet zone 4 modul per sisi.
     let expected_w = (ref_code.width() + 8) * 8;
-    // Ponytail: parse width dari atribut SVG (format qrcode crate stabil).
     let w = body
         .split("width=\"")
         .nth(1)
@@ -579,8 +607,67 @@ async fn qr_endpoint_serves_svg_with_pairing_url() {
     assert_eq!(
         w,
         Some(expected_w),
-        "lebar SVG harus {} (modul {} + qz 8, x8): {body}",
-        expected_w,
-        ref_code.width()
+        "lebar SVG harus {}: {body}",
+        expected_w
     );
+}
+
+#[tokio::test]
+async fn api_source_active_demotes_and_404() {
+    // B6: endpoint Jadikan aktif menurunkan sumber lain; 404 bila tak dikenal.
+    let server = TestServer::start().await;
+    {
+        let mut sources = server.state.sources.write();
+        for id in ["s1", "s2"] {
+            sources
+                .insert(phonecam_core::source::Source::new(
+                    id.into(),
+                    phonecam_core::source::SourceInfo {
+                        device_id: "dev".into(),
+                        name: "HP".into(),
+                        user_agent: "UA".into(),
+                        transport: phonecam_core::protocol::Transport::WebRtc,
+                        connection_kind: phonecam_core::source::ConnectionKind::Wifi,
+                    },
+                    "tok".into(),
+                ))
+                .expect("insert sumber");
+        }
+    }
+    {
+        let sources = server.state.sources.read();
+        assert_eq!(
+            sources.active().map(|s| s.id.as_str()),
+            Some("s1"),
+            "sumber pertama harus aktif"
+        );
+    }
+    let (status, _body) = https_post(&server.addr, "/api/source/s2/active", "").await;
+    assert_eq!(status, 204, "jadikan aktif harus 204");
+    {
+        let sources = server.state.sources.read();
+        assert_eq!(sources.active().map(|s| s.id.as_str()), Some("s2"));
+        assert_eq!(
+            sources.get("s1").map(|s| s.role),
+            Some(phonecam_core::protocol::SourceRole::Preview)
+        );
+    }
+    // B6: rename perangkat.
+    let (status, _body) = https_post(
+        &server.addr,
+        "/api/source/s2/rename",
+        "{\"name\": \"HP Belakang\"}",
+    )
+    .await;
+    assert_eq!(status, 204, "rename harus 204");
+    {
+        let sources = server.state.sources.read();
+        assert_eq!(
+            sources.get("s2").map(|s| s.info.name.as_str()),
+            Some("HP Belakang")
+        );
+    }
+    // Sumber tak dikenal -> 404.
+    let (status, _body) = https_post(&server.addr, "/api/source/tidak-ada/active", "").await;
+    assert_eq!(status, 404);
 }

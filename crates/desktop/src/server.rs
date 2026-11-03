@@ -14,6 +14,8 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use axum::extract::Path;
+use axum::response::Response;
 use axum::Router;
 
 use phonecam_core::net::list_private_interfaces;
@@ -125,6 +127,10 @@ pub fn router() -> Router<Arc<AppState>> {
         // C3.1: state untuk UI desktop (PIN, QR, sumber, status vcam).
         .route("/api/state", get(api_state))
         .route("/api/pin/regenerate", post(api_pin_regenerate))
+        // B6: Jadikan aktif (switcher) — tepat satu sumber aktif.
+        .route("/api/source/{id}/active", post(api_source_active))
+        // B6: ganti nama perangkat dari menu kartu kamera.
+        .route("/api/source/{id}/rename", post(api_source_rename))
 }
 
 /// `GET /` — halaman pairing PWA (B1).
@@ -247,6 +253,7 @@ async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json:
                 "state": state_label(&s.status.state.0),
                 "battery": s.status.battery,
                 "rtt_ms": s.status.rtt_ms,
+                "role": s.role,
             })
         })
         .collect::<Vec<_>>();
@@ -267,6 +274,74 @@ async fn api_pin_regenerate(State(state): State<Arc<AppState>>) -> axum::Json<se
         "pin": pairing.pin.as_str(),
         "pin_remaining_secs": pairing.remaining(crate::app::now_secs()),
     }))
+}
+
+/// `POST /api/source/{id}/active` — tandai sumber aktif (B6/B7: switcher).
+///
+/// Sumber aktif lain diturunkan ke `preview`; `cmd_role` dikirim ke kedua
+/// HP bila terhubung. Mengembalikan 404 bila sumber tak dikenal.
+async fn api_source_active(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let demoted = {
+        let mut sources = state.sources.write();
+        if sources.get(&id).is_none() {
+            return (axum::http::StatusCode::NOT_FOUND, "sumber tidak ditemukan").into_response();
+        }
+        sources.set_active(&id)
+    };
+    // B6: kabari kedua HP soal peran barunya (active/preview menentukan
+    // resolusi kamera; B5: preview memakai resolusi rendah).
+    let payload = phonecam_core::protocol::CmdRolePayload {
+        source_id: id.clone(),
+        role: phonecam_core::protocol::SourceRole::Active,
+    };
+    if let Ok(text) = phonecam_core::protocol::build(
+        phonecam_core::protocol::types::CMD_ROLE,
+        None,
+        Some(&payload),
+    ) {
+        let _ = state.session_cmds.read().get(&id).map(|tx| tx.send(text));
+    }
+    if let Some(prev) = demoted {
+        let payload = phonecam_core::protocol::CmdRolePayload {
+            source_id: prev.clone(),
+            role: phonecam_core::protocol::SourceRole::Preview,
+        };
+        if let Ok(text) = phonecam_core::protocol::build(
+            phonecam_core::protocol::types::CMD_ROLE,
+            None,
+            Some(&payload),
+        ) {
+            let _ = state.session_cmds.read().get(&prev).map(|tx| tx.send(text));
+        }
+    }
+    (axum::http::StatusCode::NO_CONTENT, "").into_response()
+}
+
+/// `POST /api/source/{id}/rename` — ganti nama perangkat (B6).
+async fn api_source_rename(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::Json<serde_json::Value>,
+) -> Response {
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s.chars().count() <= 40);
+    let Some(name) = name else {
+        return (axum::http::StatusCode::BAD_REQUEST, "nama tidak valid").into_response();
+    };
+    let mut sources = state.sources.write();
+    if sources.get(&id).is_none() {
+        return (axum::http::StatusCode::NOT_FOUND, "sumber tidak ditemukan").into_response();
+    }
+    if let Some(s) = sources.get_mut(&id) {
+        s.info.name = name;
+    }
+    (axum::http::StatusCode::NO_CONTENT, "").into_response()
 }
 
 /// Header Host tidak tersedia di handler JSON; pakai IP antarmuka privat

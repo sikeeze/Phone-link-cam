@@ -185,26 +185,62 @@ function Home({
 }
 
 function Cameras({ sources }: { sources: SourceRow[] }) {
+  const [renaming, setRenaming] = useState<string | null>(null);
   return (
     <>
       <h1>Kamera</h1>
-      <p class="subtitle">Daftar HP yang sedang terhubung.</p>
+      <p class="subtitle">Daftar HP yang sedang terhubung (B6: maks 6).</p>
       {sources.length === 0 ? (
         <div class="empty-state">
           <span>Belum ada kamera terhubung. Hubungkan dari layar Beranda.</span>
         </div>
       ) : (
-        <div class="source-list">
-          {sources.map((s) => (
-            <div key={s.id} class="card">
-              <div class="source-row" style="border: none; padding: 0">
-                <span class="name">{s.name}</span>
+        <div class="camera-grid">
+          {sources.map((s, i) => (
+            <div key={s.id} class="card camera-card">
+              <div class="thumb" aria-label="Pratinjau sumber">
+                <span class="thumb-num">{i + 1}</span>
+                {s.role === "active" && <span class="live-label">LIVE</span>}
+              </div>
+              <div class="camera-meta">
+                {renaming === s.id ? (
+                  <input
+                    class="rename-input"
+                    value={s.name}
+                    autoFocus
+                    onBlur={(e) => {
+                      setRenaming(null);
+                      void fetch(`/api/source/${s.id}/rename`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: (e.target as HTMLInputElement).value }),
+                      });
+                    }}
+                  />
+                ) : (
+                  <button
+                    class="name-btn"
+                    title="Ganti nama perangkat"
+                    onClick={() => setRenaming(s.id)}
+                  >
+                    {s.name} ✎
+                  </button>
+                )}
                 <span class="tag">{s.connection_kind}</span>
                 <span class="status-pill">
                   <span class="dot" aria-hidden="true" />
                   {s.state}
                 </span>
+                {s.battery != null && <span class="tag">{s.battery}%</span>}
+                {s.rtt_ms != null && <span class="tag">{s.rtt_ms} ms</span>}
               </div>
+              <button
+                class="btn"
+                disabled={s.role === "active"}
+                onClick={() => void fetch(`/api/source/${s.id}/active`, { method: "POST" })}
+              >
+                {s.role === "active" ? "Sedang aktif" : "Jadikan aktif"}
+              </button>
             </div>
           ))}
         </div>
@@ -213,17 +249,76 @@ function Cameras({ sources }: { sources: SourceRow[] }) {
   );
 }
 
+type Transition = "cut" | "crossfade" | "slide";
+
 function Studio({ sources }: { sources: SourceRow[] }) {
-  const active = sources.find((s) => s.state === "live");
+  const active = sources.find((s) => s.role === "active") ?? sources[0];
+  const [transition, setTransition] = useState<Transition>("cut");
+  const [durationMs, setDurationMs] = useState(200);
+
+  // B7: hotkey 1-6 memilih sumber saat aplikasi fokus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key >= "1" && e.key <= "6") {
+        const s = sources[Number(e.key) - 1];
+        if (s && s.role !== "active") {
+          void fetch(`/api/source/${s.id}/active`, { method: "POST" });
+        }
+      } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        const idx = sources.findIndex((s) => s.role === "active");
+        const next = sources[(idx + (e.key === "ArrowRight" ? 1 : sources.length - 1)) % sources.length];
+        if (next && next.role !== "active") {
+          void fetch(`/api/source/${next.id}/active`, { method: "POST" });
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sources]);
+
+  const switchTo = (s: SourceRow) => {
+    if (s.role === "active") return;
+    // B6: keyframe-before-switch — PC minta keyframe HP sebelum ganti;
+    // logika tunggu 500 ms ada di backend (cmd_keyframe).
+    void fetch(`/api/source/${s.id}/active`, { method: "POST" });
+  };
+
   return (
     <>
       <h1>Studio</h1>
-      <p class="subtitle">Preview output dan kontrol kamera aktif.</p>
+      <p class="subtitle">Preview output dan kontrol kamera aktif (B6/B7).</p>
       <div class="studio-grid">
         <div class="preview">
           <span class="live-label">LIVE</span>
+          {active && <span class="preview-name">{active.name}</span>}
         </div>
         <div class="card control-panel">
+          <fieldset>
+            <legend>Transisi (B6)</legend>
+            {(["cut", "crossfade", "slide"] as const).map((t) => (
+              <label key={t} class="radio-row">
+                <input
+                  type="radio"
+                  name="transition"
+                  checked={transition === t}
+                  onChange={() => setTransition(t)}
+                />
+                {t === "cut" ? "Cut" : t === "crossfade" ? "Crossfade" : "Slide"}
+              </label>
+            ))}
+          </fieldset>
+          <label>
+            Durasi transisi: {durationMs} ms
+            <input
+              type="range"
+              min="0"
+              max="500"
+              step="50"
+              value={durationMs}
+              onInput={(e) => setDurationMs(Number((e.target as HTMLInputElement).value))}
+            />
+          </label>
           <label>
             Zoom
             <input type="range" min="1" max="2" step="0.1" defaultValue="1" />
@@ -245,6 +340,25 @@ function Studio({ sources }: { sources: SourceRow[] }) {
           </p>
         </div>
       </div>
+      <div class="switcher" role="tablist" aria-label="Switcher sumber 1-6 (B7)">
+        {sources.map((s, i) => (
+          <button
+            key={s.id}
+            role="tab"
+            aria-selected={s.role === "active"}
+            class={`switcher-thumb ${s.role === "active" ? "active" : ""}`}
+            title={`${s.name} (hotkey ${i + 1})`}
+            onClick={() => switchTo(s)}
+          >
+            <span class="thumb-num">{i + 1}</span>
+            <span class="switcher-name">{s.name}</span>
+            {s.role === "active" && <span class="live-dot" aria-label="Aktif" />}
+          </button>
+        ))}
+      </div>
+      <p class="subtitle" style="margin: 0">
+        Hotkey: 1-6 pilih sumber, ←/→ pindah (B7). Transisi aktif: {transition} {durationMs} ms.
+      </p>
     </>
   );
 }
