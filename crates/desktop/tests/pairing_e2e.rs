@@ -703,6 +703,20 @@ async fn api_connections_lists_interfaces_and_adb() {
 }
 
 #[tokio::test]
+async fn api_adb_reverse_without_binary_is_404_or_runs() {
+    // B9.2: POST /api/adb/reverse — 404 bila adb tidak ada di PATH,
+    // 204 bila forwarding berhasil, 502 bila adb ada tapi gagal.
+    // Tidak ada assertion mesin-uji-spesifik: semua kode respons diterima
+    // selain error server (5xx selain 502) dan panic.
+    let server = TestServer::start().await;
+    let (status, body) = https_post(&server.addr, "/api/adb/reverse", "").await;
+    assert!(
+        [404u16, 204, 502].contains(&status),
+        "respons tak terduga {status}: {body}"
+    );
+}
+
+#[tokio::test]
 async fn api_source_active_demotes_and_404() {
     // B6: endpoint Jadikan aktif menurunkan sumber lain; 404 bila tak dikenal.
     let server = TestServer::start().await;

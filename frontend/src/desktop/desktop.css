@@ -474,3 +474,37 @@ fieldset {
   border-radius: 8px;
   margin: 0 0 12px;
 }
+
+/* C4: layar Koneksi — grid 2x2 kartu jalur (B9). */
+.conn-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.conn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.conn-card.selected {
+  border-color: var(--accent, #4f8cff);
+}
+.conn-card .badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.conn-card .badge.ok {
+  background: rgba(80, 200, 120, 0.18);
+  color: #5cc88a;
+}
+.conn-card .badge.warn {
+  background: rgba(240, 180, 60, 0.18);
+  color: #f0b45a;
+}
+.conn-card .badge.muted {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted, #9aa4b2);
+}

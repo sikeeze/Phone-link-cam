@@ -135,6 +135,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/source/{id}/keyframe", post(api_source_keyframe))
         // B9.1: daftar jalur koneksi (Wi-Fi/LAN, tethering, hotspot, ADB).
         .route("/api/connections", get(api_connections))
+        // B9.2: jalankan adb reverse (mode kabel Android).
+        .route("/api/adb/reverse", post(api_adb_reverse))
 }
 
 /// `GET /` — halaman pairing PWA (B1).
@@ -300,6 +302,29 @@ async fn api_connections() -> axum::Json<serde_json::Value> {
         "interfaces": ifas,
         "adb": adb,
     }))
+}
+
+/// `POST /api/adb/reverse` — jalankan `adb reverse` untuk mode kabel Android
+/// (B9.2). Mengembalikan status 204 bila forwarding aktif, 502 bila adb gagal,
+/// dan 404 bila binary adb tidak ada di PATH (UI menawarkan unduh eksplisit).
+async fn api_adb_reverse() -> axum::response::Response {
+    // B9.2: deteksi PATH; cmd dipakai untuk sinkronisasi dengan handler ini.
+    let db = match crate::adb::Adb::detect() {
+        Some(a) => a,
+        None => return (axum::http::StatusCode::NOT_FOUND).into_response(),
+    };
+    // port server ADB HTTP: 8080 (B9.2, lihat constants::ADB_HTTP).
+    match db.reverse(phonecam_core::constants::port::ADB_HTTP) {
+        Ok(()) => (axum::http::StatusCode::NO_CONTENT).into_response(),
+        Err(e) => {
+            tracing::warn!(?e, "adb reverse gagal");
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                axum::Json(serde_json::json!({ "error": format!("{e}") })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// `POST /api/pin/regenerate` — PIN baru dari UI (B2: bisa di-regenerate).

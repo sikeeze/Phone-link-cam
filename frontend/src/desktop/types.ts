@@ -22,3 +22,22 @@ export interface SourceRow {
   /** Peran sumber (B6): "active" | "preview". */
   role: "active" | "preview";
 }
+
+/** Satu antarmuka jaringan privat dari `/api/connections` (B9.1). */
+export interface InterfaceRow {
+  name: string;
+  addrs: string[];
+  kind: "lan" | "tether" | "hotspot";
+  status: "active" | "needs_setup" | "unavailable";
+}
+
+/** Status binary adb (B9.2); null bila tidak ada di PATH. */
+export interface AdbStatus {
+  ready: boolean;
+  unauthorized: boolean;
+}
+
+export interface ConnectionsState {
+  interfaces: InterfaceRow[];
+  adb: AdbStatus | null;
+}

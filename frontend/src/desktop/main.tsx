@@ -1,10 +1,10 @@
 import { render } from "preact";
 import { useEffect, useState, useCallback } from "preact/hooks";
 
-import { DesktopState, SourceRow } from "./types";
+import { DesktopState, SourceRow, ConnectionsState } from "./types";
 import "./desktop.css";
 
-type Screen = "home" | "cameras" | "studio" | "settings";
+type Screen = "home" | "cameras" | "studio" | "connections" | "settings";
 
 /**
  * UI aplikasi desktop (README C3). Disediakan oleh server HTTPS PhoneCam
@@ -63,6 +63,7 @@ export function DesktopApp() {
         )}
         {screen === "cameras" && <Cameras sources={state?.sources ?? []} />}
         {screen === "studio" && <Studio sources={state?.sources ?? []} />}
+        {screen === "connections" && <Connections />}
         {screen === "settings" && <Settings />}
         {!state && <p class="subtitle">Memuat…</p>}
       </main>
@@ -84,6 +85,7 @@ function Sidebar({
     ["home", "Beranda", "⌂"],
     ["cameras", "Kamera", "▣"],
     ["studio", "Studio", "◎"],
+    ["connections", "Koneksi", "⇄"],
     ["settings", "Pengaturan", "⚙"],
   ];
   const connected = sources.some((s) => s.state === "live");
@@ -359,6 +361,148 @@ function Studio({ sources }: { sources: SourceRow[] }) {
       <p class="subtitle" style="margin: 0">
         Hotkey: 1-6 pilih sumber, ←/→ pindah (B7). Transisi aktif: {transition} {durationMs} ms.
       </p>
+    </>
+  );
+}
+
+/**
+ * Layar Jalur koneksi (README C4). Grid 2x2 kartu jalur: Wi-Fi, Kabel USB
+ * Android (mode ADB), Kabel USB iPhone (tethering/hotspot), Hotspot.
+ *
+ * Status kartu diambil dari `/api/connections` (B9.1): antarmuka privat
+ * diklasifikasikan per subnet, status adb dari PATH. Mode ADB memakai
+ * endpoint POST /api/adb/reverse (B9.2).
+ *
+ * ponytail: deteksi iPhone/Hotspot memakai subnet antarmuka (172.20.10.x);
+ * Wi-Fi Direct HP ke PC butuh mDNS — fase berikutnya (ADR-002).
+ */
+function Connections() {
+  const [conns, setConns] = useState<ConnectionsState | null>(null);
+  const [autoMove, setAutoMove] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // B9.1: polling tiap 3 detik (constants::timing::INTERFACE_POLL_SECS).
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch("/api/connections");
+      if (res.ok) setConns(await res.json());
+    } catch (e) {
+      console.error("gagal memuat koneksi", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const tether = conns?.interfaces.find((i) => i.kind === "tether");
+  const hotspot = conns?.interfaces.find((i) => i.kind === "hotspot");
+  const adb = conns?.adb;
+  const lan = conns?.interfaces.find((i) => i.kind === "lan");
+
+  const useAdb = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/adb/reverse", { method: "POST" });
+      if (res.status === 404) {
+        // ADR-002 D1: konfirmasi eksplisit sebelum unduh platform-tools.
+        alert(
+          "adb tidak ditemukan.\n\nUnduh platform-tools dari Google? (~15 MB, " +
+            "disimpan di data aplikasi — jalankan lagi nanti tanpa unduh ulang).",
+        );
+      } else if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert(`Gagal memulai mode ADB: ${body.error ?? res.status}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const card = (
+    title: string,
+    status: string,
+    desc: string,
+    target: string,
+    actionLabel: string,
+    onAction: () => void,
+    selected: boolean,
+  ) => (
+    <div class={`card conn-card${selected ? " selected" : ""}`}>
+      <h2>{title}</h2>
+      <span class={`badge ${status === "Aktif" ? "ok" : status === "Perlu setup" ? "warn" : "muted"}`}>
+        {status}
+      </span>
+      <p class="subtitle" style="margin: 0">
+        {desc}
+      </p>
+      <span class="tag">Target: {target}</span>
+      <button class="btn" onClick={onAction} disabled={busy}>
+        {actionLabel}
+      </button>
+    </div>
+  );
+
+  return (
+    <>
+      <h1>Koneksi</h1>
+      <p class="subtitle">Pilih jalur koneksi ke HP (B9). Wi-Fi tetap jadi bawaan.</p>
+      <div class="conn-grid">
+        {card(
+          "Wi-Fi",
+          lan ? "Aktif" : "Tidak tersedia",
+          "Pindai QR atau buka URL pairing di browser HP.",
+          "20-60 ms",
+          "Gunakan",
+          () => setAutoMove(false),
+          !tether && !hotspot && !adb?.ready,
+        )}
+        {card(
+          "Kabel USB Android",
+          adb ? (adb.ready ? "Aktif" : adb.unauthorized ? "Perlu setup" : "Terdeteksi") : "Tidak tersedia",
+          adb?.unauthorized
+            ? 'Setujui dialog "Izinkan debugging USB" di HP.'
+            : "Mode ADB: HP membuka localhost:8080 lewat adb reverse.",
+          "40-100 ms",
+          "Siapkan",
+          useAdb,
+          adb?.ready ?? false,
+        )}
+        {card(
+          "Kabel USB iPhone",
+          hotspot ? "Aktif" : "Tidak tersedia",
+          "Aktifkan Personal Hotspot di iPhone, sambungkan kabel, ketuk Percayai.",
+          "40-100 ms",
+          "Panduan",
+          () => setAutoMove(false),
+          hotspot != null,
+        )}
+        {card(
+          "Hotspot",
+          tether ? "Aktif" : "Tidak tersedia",
+          "Android: aktifkan USB tethering; PC mendapat antarmuka baru.",
+          "40-100 ms",
+          "Panduan",
+          () => setAutoMove(false),
+          tether != null,
+        )}
+      </div>
+      <div class="card settings-section">
+        <div class="setting-row">
+          <span>Pindah otomatis bila koneksi putus</span>
+          <button
+            class={`toggle${autoMove ? " on" : ""}`}
+            aria-label="Pindah otomatis"
+            onClick={() => setAutoMove((v) => !v)}
+          />
+        </div>
+        <p class="subtitle" style="margin: 0">
+          ponytail: urutan prioritas jalur dan auto-failover membutuhkan Connection
+          Manager aktif — default nonaktif (README §E 3B).
+        </p>
+      </div>
     </>
   );
 }
