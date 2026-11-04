@@ -553,3 +553,72 @@ fieldset {
   color: #fff;
   border-color: transparent;
 }
+
+/* B9.1: URL pairing per jalur + daftar prioritas. */
+.tag.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+.priority-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.priority-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.priority-list .name {
+  min-width: 110px;
+}
+
+.priority-list .badge,
+.conn-card .badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.conn-card .badge.ok {
+  background: #1f6f43;
+  color: #d7f5e3;
+}
+
+.conn-card .badge.warn {
+  background: #8a5b14;
+  color: #ffe9c2;
+}
+
+.conn-card .badge.muted,
+.priority-list .badge.muted {
+  background: #3a3f4b;
+  color: #9aa3b2;
+}
+
+.priority-list .badge.ok {
+  background: #1f6f43;
+  color: #d7f5e3;
+}
+
+/* B9.1: badge kualitas RTT di daftar sumber. */
+.tag.qual-ok {
+  background: #1f6f43;
+  color: #d7f5e3;
+}
+
+.tag.qual-bad {
+  background: #8a3a3a;
+  color: #ffd6d6;
+}

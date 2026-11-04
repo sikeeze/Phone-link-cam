@@ -28,13 +28,21 @@ export interface InterfaceRow {
   name: string;
   addrs: string[];
   kind: "lan" | "tether" | "hotspot";
+  /** Label jenis jalur untuk UI (B9.1). */
+  kind_label: string;
+  /** Prioritas jalur (B9.1: kabel > Wi-Fi; kecil = tinggi). */
+  priority: number;
   status: "active" | "needs_setup" | "unavailable";
+  /** URL pairing jalur ini (B9.1: IP antarmuka jalur ini). */
+  pair_url: string;
 }
 
 /** Status binary adb (B9.2); null bila tidak ada di PATH. */
 export interface AdbStatus {
   ready: boolean;
   unauthorized: boolean;
+  /** URL pairing mode ADB (B9.2: http://localhost:8080). */
+  pair_url: string;
 }
 
 export interface ConnectionsState {

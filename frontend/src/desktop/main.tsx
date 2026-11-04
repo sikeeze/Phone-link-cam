@@ -169,7 +169,11 @@ function Home({
                     {s.state}
                   </span>
                   {s.battery != null && <span class="tag">{s.battery}%</span>}
-                  {s.rtt_ms != null && <span class="tag">{s.rtt_ms} ms</span>}
+                  {s.rtt_ms != null && (
+                    <span class={`tag ${qualityBadge(s.rtt_ms) === "Baik" ? "qual-ok" : qualityBadge(s.rtt_ms) === "Buruk" ? "qual-bad" : ""}`}>
+                      {s.rtt_ms} ms · {qualityBadge(s.rtt_ms)}
+                    </span>
+                  )}
                 </div>
               ))
             )}
@@ -235,7 +239,11 @@ function Cameras({ sources }: { sources: SourceRow[] }) {
                   {s.state}
                 </span>
                 {s.battery != null && <span class="tag">{s.battery}%</span>}
-                {s.rtt_ms != null && <span class="tag">{s.rtt_ms} ms</span>}
+                {s.rtt_ms != null && (
+                  <span class={`tag ${qualityBadge(s.rtt_ms) === "Baik" ? "qual-ok" : qualityBadge(s.rtt_ms) === "Buruk" ? "qual-bad" : ""}`}>
+                    {s.rtt_ms} ms · {qualityBadge(s.rtt_ms)}
+                  </span>
+                )}
               </div>
               <button
                 class="btn"
@@ -253,6 +261,14 @@ function Cameras({ sources }: { sources: SourceRow[] }) {
 }
 
 type Transition = "cut" | "crossfade" | "slide";
+
+/** Badge kualitas jalur dari RTT (B9.1: Baik < 30 ms, Cukup 30-80, Buruk > 80). */
+function qualityBadge(rttMs: number | null): string | null {
+  if (rttMs == null) return null;
+  if (rttMs < 30) return "Baik";
+  if (rttMs <= 80) return "Cukup";
+  return "Buruk";
+}
 
 function Studio({ sources }: { sources: SourceRow[] }) {
   const active = sources.find((s) => s.role === "active") ?? sources[0];
@@ -372,7 +388,8 @@ function Studio({ sources }: { sources: SourceRow[] }) {
  *
  * Status kartu diambil dari `/api/connections` (B9.1): antarmuka privat
  * diklasifikasikan per subnet, status adb dari PATH. Mode ADB memakai
- * endpoint POST /api/adb/reverse (B9.2).
+ * endpoint POST /api/adb/reverse (B9.2). Tiap kartu menampilkan URL
+ * pairing jalurnya sendiri (B9.1).
  *
  * ponytail: deteksi iPhone/Hotspot memakai subnet antarmuka (172.20.10.x);
  * Wi-Fi Direct HP ke PC butuh mDNS — fase berikutnya (ADR-002).
@@ -431,6 +448,7 @@ function Connections() {
     actionLabel: string,
     onAction: () => void,
     selected: boolean,
+    pairUrl?: string,
   ) => (
     <div class={`card conn-card${selected ? " selected" : ""}`}>
       <h2>{title}</h2>
@@ -441,6 +459,11 @@ function Connections() {
         {desc}
       </p>
       <span class="tag">Target: {target}</span>
+      {pairUrl && (
+        <span class="tag mono" title={`URL pairing jalur ini: ${pairUrl}`}>
+          {pairUrl}
+        </span>
+      )}
       <button class="btn" onClick={onAction} disabled={busy}>
         {actionLabel}
       </button>
@@ -460,6 +483,7 @@ function Connections() {
           "Gunakan",
           () => setAutoMove(false),
           !tether && !hotspot && !adb?.ready,
+          lan?.pair_url,
         )}
         {card(
           "Kabel USB Android",
@@ -471,6 +495,7 @@ function Connections() {
           "Siapkan",
           useAdb,
           adb?.ready ?? false,
+          adb?.pair_url,
         )}
         {card(
           "Kabel USB iPhone",
@@ -480,6 +505,7 @@ function Connections() {
           "Panduan",
           () => setWizard({ platform: "iphone", step: 0 }),
           hotspot != null,
+          hotspot?.pair_url,
         )}
         {card(
           "Hotspot",
@@ -489,8 +515,29 @@ function Connections() {
           "Panduan",
           () => setWizard({ platform: "android", step: 0 }),
           tether != null,
+          tether?.pair_url,
         )}
       </div>
+      {conns && conns.interfaces.length > 0 && (
+        <div class="card settings-section">
+          <h2>Urutan prioritas jalur (B9.1)</h2>
+          <ol class="priority-list">
+            {conns.interfaces.map((i) => (
+              <li key={i.name}>
+                <span class="name">{i.kind_label}</span>
+                <span class="tag">{i.name}</span>
+                <span class={`badge ${i.status === "active" ? "ok" : "muted"}`}>
+                  {i.status === "active" ? "Aktif" : i.status === "needs_setup" ? "Perlu setup" : "Tidak tersedia"}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p class="subtitle" style="margin: 0">
+            Prioritas otomatis: kabel, lalu Wi-Fi, lalu hotspot. Badge kualitas
+            (Baik/Cukup/Buruk dari RTT) muncul setelah HP terhubung.
+          </p>
+        </div>
+      )}
       {wizard && (
         <CableWizard
           wizard={wizard}

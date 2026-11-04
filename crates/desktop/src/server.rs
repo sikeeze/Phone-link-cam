@@ -276,26 +276,38 @@ async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json:
 /// `GET /api/connections` — daftar jalur koneksi yang tersedia (B9.1).
 ///
 /// Menggabungkan antarmuka jaringan privat (Wi-Fi/LAN, tethering, hotspot)
-/// dengan status adb (B9.2). UI menampilkan ini sebagai opsi jalur pairing.
-async fn api_connections() -> axum::Json<serde_json::Value> {
-    let ifas = phonecam_core::net::list_private_interfaces()
+/// dengan status adb (B9.2). Diurutkan per prioritas B9.1 (kabel > Wi-Fi)
+/// dan tiap jalur membawa URL pairing-nya sendiri (B9.1: URL memakai IP
+/// antarmuka jalur itu).
+async fn api_connections(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let port = state.https_port.read().unwrap_or(settings_default_port());
+    let mut ifas = phonecam_core::net::list_private_interfaces()
         .unwrap_or_default()
         .into_iter()
         .map(|i| {
+            // B9.1: URL pairing per jalur memakai IP antarmuka jalur ini.
+            let host = i.addrs.first().map(|a| a.to_string()).unwrap_or_default();
             serde_json::json!({
                 "name": i.name,
                 "addrs": i.addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
                 "kind": i.kind,
+                "kind_label": i.kind.label_id(),
+                "priority": i.kind.path_priority(),
                 "status": i.status,
+                "pair_url": format!("https://{host}:{port}"),
             })
         })
         .collect::<Vec<_>>();
+    // B9.1: urutkan berdasarkan prioritas (kabel dulu).
+    ifas.sort_by_key(|i| i["priority"].as_u64().unwrap_or(99));
     // B9.2: adb opsional — None kalau binary tidak ada di PATH.
     let adb = crate::adb::Adb::detect().map(|a| {
-        let state = a.state().ok();
+        let st = a.state().ok();
         serde_json::json!({
-            "ready": state == Some(crate::adb::AdbState::Ready),
-            "unauthorized": state == Some(crate::adb::AdbState::Unauthorized),
+            "ready": st == Some(crate::adb::AdbState::Ready),
+            "unauthorized": st == Some(crate::adb::AdbState::Unauthorized),
+            // B9.2: mode ADB tidak punya IP antarmuka; HP membuka localhost.
+            "pair_url": format!("http://localhost:{}", phonecam_core::constants::port::ADB_HTTP),
         })
     });
     axum::Json(serde_json::json!({

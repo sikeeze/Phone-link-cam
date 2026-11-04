@@ -82,6 +82,39 @@ impl InterfaceStatus {
     }
 }
 
+impl InterfaceKind {
+    /// Prioritas jalur B9.1: kabel (tethering/hotspot) > Wi-Fi.
+    /// Angka kecil = prioritas tinggi. Dipakai untuk pengurutan jalur
+    /// dan tampilan urutan prioritas di layar Koneksi.
+    pub fn path_priority(&self) -> u8 {
+        match self {
+            InterfaceKind::Tether => 0,
+            InterfaceKind::Hotspot => 1,
+            InterfaceKind::Lan => 2,
+        }
+    }
+
+    /// Label jenis jalur untuk UI (B9.1).
+    pub fn label_id(&self) -> &'static str {
+        match self {
+            InterfaceKind::Lan => "Wi-Fi",
+            InterfaceKind::Tether => "USB tethering",
+            InterfaceKind::Hotspot => "Personal Hotspot",
+        }
+    }
+}
+
+/// Badge kualitas jalur dari RTT (B9.1: Baik < 30 ms, Cukup 30-80 ms,
+/// Buruk > 80 ms). `None` bila RTT belum diukur.
+pub fn quality_badge(rtt_ms: Option<u32>) -> Option<&'static str> {
+    match rtt_ms {
+        Some(rtt) if rtt < 30 => Some("Baik"),
+        Some(rtt) if rtt <= 80 => Some("Cukup"),
+        Some(_) => Some("Buruk"),
+        None => None,
+    }
+}
+
 /// Daftar antarmuka privat yang bisa dipakai server pairing (B1/B9.1).
 /// Menggunakan local_ip_address::list_afinet_netifas (terverifikasi di docs.rs).
 pub fn list_private_interfaces() -> Result<Vec<NetworkInterface>> {
@@ -234,6 +267,25 @@ mod tests {
             ifa.kind = kind;
         }
         assert_eq!(ifa.kind, InterfaceKind::Tether);
+    }
+
+    #[test]
+    fn path_priority_cable_beats_wifi_b91() {
+        // B9.1: kabel (tether/hotspot) > Wi-Fi.
+        assert!(InterfaceKind::Tether.path_priority() < InterfaceKind::Lan.path_priority());
+        assert!(InterfaceKind::Hotspot.path_priority() < InterfaceKind::Lan.path_priority());
+    }
+
+    #[test]
+    fn quality_badge_thresholds_b91() {
+        // B9.1: Baik < 30 ms, Cukup 30-80 ms, Buruk > 80 ms.
+        assert_eq!(quality_badge(Some(10)), Some("Baik"));
+        assert_eq!(quality_badge(Some(29)), Some("Baik"));
+        assert_eq!(quality_badge(Some(30)), Some("Cukup"));
+        assert_eq!(quality_badge(Some(80)), Some("Cukup"));
+        assert_eq!(quality_badge(Some(81)), Some("Buruk"));
+        assert_eq!(quality_badge(Some(500)), Some("Buruk"));
+        assert_eq!(quality_badge(None), None);
     }
 
     #[test]

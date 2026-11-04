@@ -700,6 +700,30 @@ async fn api_connections_lists_interfaces_and_adb() {
         v["adb"].is_null() || v["adb"].is_object(),
         "adb harus null atau objek: {resp}"
     );
+    // B9.1: tiap jalur membawa URL pairing sendiri (IP antarmuka jalur ini)
+    // dan field prioritas untuk pengurutan jalur.
+    for ifa in ifas {
+        let url = ifa["pair_url"].as_str().expect("pair_url per jalur");
+        assert!(
+            url.starts_with("https://") && url.contains(':'),
+            "pair_url harus https://<ip>:<port>: {url}"
+        );
+        assert!(
+            ifa["priority"].as_u64().is_some(),
+            "priority harus angka: {ifa}"
+        );
+        assert!(
+            ifa["kind_label"].as_str().is_some(),
+            "kind_label harus string: {ifa}"
+        );
+    }
+    // B9.1: urutan terurut ascending by priority (kabel < Wi-Fi).
+    let mut prev = 0u64;
+    for ifa in ifas {
+        let p = ifa["priority"].as_u64().unwrap_or(99);
+        assert!(p >= prev, "jalur harus terurut prioritas: {resp}");
+        prev = p;
+    }
 }
 
 #[tokio::test]
