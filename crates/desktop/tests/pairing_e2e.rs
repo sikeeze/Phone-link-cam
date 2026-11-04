@@ -153,14 +153,80 @@ async fn https_get(addr: &SocketAddr, path: &str) -> (u16, String) {
     tls.write_all(req.as_bytes()).await.expect("write");
     let mut buf = Vec::new();
     tls.read_to_end(&mut buf).await.expect("read");
-    let body = String::from_utf8_lossy(&buf).into_owned();
-    let status = body
+    let raw = String::from_utf8_lossy(&buf).into_owned();
+    let status = raw
+        .split(CRLF)
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    (status, raw)
+}
+
+/// GET HTTPS yang mengembalikan body yang sudah didekode (chunked-aware,
+/// B9.1). Untuk respons non-JSON, pakai https_get (raw).
+async fn https_get_json(addr: &SocketAddr, path: &str) -> (u16, String) {
+    let connector = tokio_rustls::TlsConnector::from(tls_client_config());
+    let tcp = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("TCP connect");
+    let domain = ServerName::try_from("127.0.0.1").expect("domain valid");
+    let mut tls = connector.connect(domain, tcp).await.expect("TLS connect");
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let req =
+        format!("GET {path} HTTP/1.1{CRLF2}Host: {addr}{CRLF2}Connection: close{CRLF2}{CRLF2}");
+    tls.write_all(req.as_bytes()).await.expect("write");
+    let mut buf = Vec::new();
+    tls.read_to_end(&mut buf).await.expect("read");
+    decode_response(&buf)
+}
+
+const CRLF: &str = "
+";
+const CRLF2: &str = "
+
+";
+
+/// Pisahkan status + body dari respons HTTP mentah; dekode chunked bila ada.
+fn decode_response(raw: &[u8]) -> (u16, String) {
+    let dbl: &[u8] = b"\r\n\r\n";
+    let head_end = raw.windows(4).position(|w| w == dbl).unwrap_or(raw.len());
+    let head = String::from_utf8_lossy(&raw[..head_end]);
+    let status = head
         .split("\r\n")
         .next()
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(0);
+    let rest = &raw[head_end + 4..];
+    let body = if head.to_ascii_lowercase().contains("chunked") {
+        decode_chunked(rest)
+    } else {
+        String::from_utf8_lossy(rest).into_owned()
+    };
     (status, body)
+}
+
+/// Dekode body chunked: "<hex>\r\n<data>\r\n" ... "0\r\n\r\n".
+fn decode_chunked(rest: &[u8]) -> String {
+    let crlf: &[u8] = b"\r\n";
+    let mut out = Vec::new();
+    let mut cur = rest;
+    while let Some(n) = cur.iter().position(|&b| b == b'\n') {
+        let line = String::from_utf8_lossy(&cur[..n]);
+        let size = usize::from_str_radix(line.trim(), 16).unwrap_or(0);
+        cur = &cur[n + 1..];
+        if size == 0 || cur.len() < size {
+            out.extend_from_slice(cur);
+            break;
+        }
+        out.extend_from_slice(&cur[..size]);
+        cur = &cur[size..];
+        if cur.starts_with(crlf) {
+            cur = &cur[2..];
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// POST HTTPS dengan body JSON; kembalikan (status, body).
@@ -611,6 +677,28 @@ async fn qr_endpoint_serves_svg_with_pairing_url() {
         Some(expected_w),
         "lebar SVG harus {}: {body}",
         expected_w
+    );
+}
+
+#[tokio::test]
+async fn api_connections_lists_interfaces_and_adb() {
+    // B9.1: /api/connections mengembalikan antarmuka privat + status adb.
+    let server = TestServer::start().await;
+    let (status, resp) = https_get_json(&server.addr, "/api/connections").await;
+    assert_eq!(status, 200, "/api/connections harus 200: {resp}");
+    // Ponytail: read_to_end dapat menangkap respons kedua (400 dari koneksi
+    // yang ditutup server); ambil objek JSON pertama saja.
+    let start = resp.find('{').unwrap_or(0);
+    let body = &resp[start..];
+    let end = body.find("HTTP/1.1").unwrap_or(body.len());
+    let v: serde_json::Value = serde_json::from_str(&body[..end]).expect("JSON valid");
+    let ifas = v["interfaces"].as_array().expect("interfaces array");
+    // Mesin uji paling tidak punya loopback 127.0.0.1 (B1: privat).
+    assert!(!ifas.is_empty(), "harus ada antarmuka privat: {resp}");
+    // adb boleh None (PATH tanpa adb) atau objek — bukan error.
+    assert!(
+        v["adb"].is_null() || v["adb"].is_object(),
+        "adb harus null atau objek: {resp}"
     );
 }
 

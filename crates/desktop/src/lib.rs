@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod adb;
 pub mod app;
 pub mod assets;
 pub mod pipeline;

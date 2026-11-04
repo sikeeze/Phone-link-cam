@@ -92,19 +92,27 @@ pub fn list_private_interfaces() -> Result<Vec<NetworkInterface>> {
         if !is_bindable(&ip) {
             continue;
         }
+        // B9.1: klasifikasi subnet tethering/hotspot berdasarkan IP (B9.3),
+        // bukan nama antarmuka (nama berbeda-beda per OS).
+        let kind = match &ip {
+            IpAddr::V4(v4) => classify_subnet(v4),
+            IpAddr::V6(_) => InterfaceKind::Lan,
+        };
         if let Some(existing) = out.iter_mut().find(|i| i.name == name) {
             existing.addrs.push(ip);
+            // B9.1: satu antarmuka boleh beberapa IP; ambil jenis tertinggi
+            // (Tether/Hotspot menang atas Lan) untuk label.
+            if kind != InterfaceKind::Lan {
+                existing.kind = kind;
+            }
         } else {
             out.push(NetworkInterface {
                 name,
                 addrs: vec![ip],
-                kind: InterfaceKind::Lan,
+                kind,
                 status: InterfaceStatus::Active,
             });
         }
-        // catatan: pengklasifikasian Tether/Hotspot memerlukan info tambahan
-        // (subnet 192.168.42.0/24 dan 172.20.10.0/28, B9.3); akan ditambahkan
-        // saat Connection Manager fase 3B mengikat deteksi USB.
     }
     Ok(out)
 }
@@ -209,6 +217,23 @@ mod tests {
         assert!(is_bindable(&"fe80::1".parse::<IpAddr>().unwrap()));
         assert!(is_bindable(&"::1".parse::<IpAddr>().unwrap()));
         assert!(!is_bindable(&"2606:4700::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn classify_multi_ip_interface_picks_tether() {
+        // B9.1: antarmuka dengan IP LAN + tether harus dilabel Tether.
+        let mut ifa = NetworkInterface {
+            name: "usb0".into(),
+            addrs: vec!["192.168.1.5".parse().unwrap()],
+            kind: InterfaceKind::Lan,
+            status: InterfaceStatus::Active,
+        };
+        let kind = classify_subnet(&"192.168.42.9".parse::<Ipv4Addr>().unwrap());
+        ifa.addrs.push("192.168.42.9".parse().unwrap());
+        if kind != InterfaceKind::Lan {
+            ifa.kind = kind;
+        }
+        assert_eq!(ifa.kind, InterfaceKind::Tether);
     }
 
     #[test]

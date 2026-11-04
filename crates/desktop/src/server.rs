@@ -133,6 +133,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/source/{id}/rename", post(api_source_rename))
         // B6: minta keyframe sebelum penggantian sumber aktif.
         .route("/api/source/{id}/keyframe", post(api_source_keyframe))
+        // B9.1: daftar jalur koneksi (Wi-Fi/LAN, tethering, hotspot, ADB).
+        .route("/api/connections", get(api_connections))
 }
 
 /// `GET /` — halaman pairing PWA (B1).
@@ -266,6 +268,37 @@ async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json:
         "qr_url": "/qr",
         "vcam_installed": vcam_installed(&state).await,
         "sources": sources,
+    }))
+}
+
+/// `GET /api/connections` — daftar jalur koneksi yang tersedia (B9.1).
+///
+/// Menggabungkan antarmuka jaringan privat (Wi-Fi/LAN, tethering, hotspot)
+/// dengan status adb (B9.2). UI menampilkan ini sebagai opsi jalur pairing.
+async fn api_connections() -> axum::Json<serde_json::Value> {
+    let ifas = phonecam_core::net::list_private_interfaces()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| {
+            serde_json::json!({
+                "name": i.name,
+                "addrs": i.addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                "kind": i.kind,
+                "status": i.status,
+            })
+        })
+        .collect::<Vec<_>>();
+    // B9.2: adb opsional — None kalau binary tidak ada di PATH.
+    let adb = crate::adb::Adb::detect().map(|a| {
+        let state = a.state().ok();
+        serde_json::json!({
+            "ready": state == Some(crate::adb::AdbState::Ready),
+            "unauthorized": state == Some(crate::adb::AdbState::Unauthorized),
+        })
+    });
+    axum::Json(serde_json::json!({
+        "interfaces": ifas,
+        "adb": adb,
     }))
 }
 
