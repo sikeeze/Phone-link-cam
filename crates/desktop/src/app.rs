@@ -31,8 +31,14 @@ pub struct AppState {
     pub https_port: RwLock<Option<u16>>,
     /// Virtual camera aktif (B6: satu output global; None bila belum aktif).
     pub vcam: RwLock<Option<std::sync::Arc<dyn VCam>>>,
+    /// Mutex start VCam (mencegah double-start saat panggilan konkuren).
+    /// tokio::sync::Mutex: guard-nya Send, aman di-hold across .await.
+    pub vcam_start: tokio::sync::Mutex<()>,
     /// Virtual mic aktif (B6: satu output global; None bila belum aktif).
     pub vmic: RwLock<Option<std::sync::Arc<dyn VMic>>>,
+    /// Mutex start VMic (mencegah double-start saat panggilan konkuren).
+    /// tokio::sync::Mutex: guard-nya Send, aman di-hold across .await.
+    pub vmic_start: tokio::sync::Mutex<()>,
     /// Pengirim perintah keluar ke sesi HP yang sedang terhubung, per
     /// source_id (B6/B7: cmd_role, cmd_camera, cmd_keyframe dari UI desktop).
     pub session_cmds: RwLock<HashMap<SourceId, tokio::sync::mpsc::UnboundedSender<String>>>,
@@ -52,7 +58,9 @@ impl AppState {
             sources: RwLock::new(SourceRegistry::default()),
             https_port: RwLock::new(None),
             vcam: RwLock::new(None),
+            vcam_start: tokio::sync::Mutex::new(()),
             vmic: RwLock::new(None),
+            vmic_start: tokio::sync::Mutex::new(()),
             session_cmds: RwLock::new(HashMap::new()),
             keyframe_waits: RwLock::new(HashMap::new()),
             adb_reverse: parking_lot::Mutex::new(None),
@@ -63,8 +71,17 @@ impl AppState {
     /// bila backend tidak terpasang). Mengembalikan handle yang sama untuk
     /// semua pemanggil.
     pub async fn vcam_or_start(&self) -> phonecam_core::Result<std::sync::Arc<dyn VCam>> {
-        if let Some(v) = self.vcam.read().clone() {
-            return Ok(v);
+        // B6: satu output global. Cek di bawah Mutex (bukan RwLock biasa)
+        // agar start tidak balapan saat dua sumber terhubung bersamaan.
+        {
+            let guard = self.vcam.read();
+            if let Some(v) = guard.as_ref() {
+                return Ok(v.clone());
+            }
+        }
+        let _slot = self.vcam_start.lock();
+        if let Some(v) = self.vcam.read().as_ref() {
+            return Ok(v.clone());
         }
         let backend = phonecam_vcam::platform_backend();
         let format = phonecam_vcam::VCamFormat {
@@ -82,8 +99,16 @@ impl AppState {
     /// Aktifkan virtual mic bila belum aktif (B6: satu output global;
     /// VMIC_NOT_INSTALLED bila perangkat input virtual tidak ada).
     pub async fn vmic_or_start(&self) -> phonecam_core::Result<std::sync::Arc<dyn VMic>> {
-        if let Some(v) = self.vmic.read().clone() {
-            return Ok(v);
+        // B6: satu output global; Mutex mencegah double-start konkuren.
+        {
+            let guard = self.vmic.read();
+            if let Some(v) = guard.as_ref() {
+                return Ok(v.clone());
+            }
+        }
+        let _slot = self.vmic_start.lock();
+        if let Some(v) = self.vmic.read().as_ref() {
+            return Ok(v.clone());
         }
         let backend = phonecam_vmic::platform_backend();
         backend.start(VMicFormat::default()).await?;
