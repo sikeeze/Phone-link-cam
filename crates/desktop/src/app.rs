@@ -38,6 +38,9 @@ pub struct AppState {
     pub session_cmds: RwLock<HashMap<SourceId, tokio::sync::mpsc::UnboundedSender<String>>>,
     /// Penunggu ack keyframe per source_id (B6: switch tunggu maks 500 ms).
     pub keyframe_waits: RwLock<HashMap<SourceId, tokio::sync::oneshot::Sender<()>>>,
+    /// Guard `adb reverse` aktif (B9.2: forwarding dihapus saat di-drop,
+    /// baik sesi berakhir maupun aplikasi ditutup).
+    pub adb_reverse: parking_lot::Mutex<Option<crate::adb_mode::AdbReverseGuard>>,
 }
 
 impl AppState {
@@ -52,6 +55,7 @@ impl AppState {
             vmic: RwLock::new(None),
             session_cmds: RwLock::new(HashMap::new()),
             keyframe_waits: RwLock::new(HashMap::new()),
+            adb_reverse: parking_lot::Mutex::new(None),
         }
     }
 

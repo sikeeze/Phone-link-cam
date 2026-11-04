@@ -307,15 +307,18 @@ async fn api_connections() -> axum::Json<serde_json::Value> {
 /// `POST /api/adb/reverse` — jalankan `adb reverse` untuk mode kabel Android
 /// (B9.2). Mengembalikan status 204 bila forwarding aktif, 502 bila adb gagal,
 /// dan 404 bila binary adb tidak ada di PATH (UI menawarkan unduh eksplisit).
-async fn api_adb_reverse() -> axum::response::Response {
+/// Guard disimpan di AppState sehingga forwarding dihapus saat aplikasi keluar.
+async fn api_adb_reverse(State(state): State<Arc<AppState>>) -> axum::response::Response {
     // B9.2: deteksi PATH; cmd dipakai untuk sinkronisasi dengan handler ini.
     let db = match crate::adb::Adb::detect() {
         Some(a) => a,
         None => return (axum::http::StatusCode::NOT_FOUND).into_response(),
     };
-    // port server ADB HTTP: 8080 (B9.2, lihat constants::ADB_HTTP).
-    match db.reverse(phonecam_core::constants::port::ADB_HTTP) {
-        Ok(()) => (axum::http::StatusCode::NO_CONTENT).into_response(),
+    match crate::adb_mode::AdbReverseGuard::new(db, phonecam_core::constants::port::ADB_HTTP) {
+        Ok(guard) => {
+            *state.adb_reverse.lock() = Some(guard);
+            (axum::http::StatusCode::NO_CONTENT).into_response()
+        }
         Err(e) => {
             tracing::warn!(?e, "adb reverse gagal");
             (

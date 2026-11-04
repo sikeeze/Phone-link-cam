@@ -91,6 +91,21 @@ impl Adb {
             ))
         }
     }
+
+    /// `adb reverse --remove tcp:<port>` — hapus forwarding (B9.2 poin 5:
+    /// hapus saat sesi berakhir dan saat aplikasi ditutup).
+    pub fn reverse_remove(&self, port: u16) -> Result<()> {
+        let spec = format!("tcp:{port}");
+        let out = self.run(&["reverse", "--remove", &spec])?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "adb reverse --remove gagal: {}",
+                String::from_utf8_lossy(&out.stderr)
+            ))
+        }
+    }
 }
 
 #[cfg(test)]

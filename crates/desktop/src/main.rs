@@ -44,6 +44,31 @@ fn main() -> phonecam_core::Result<()> {
         })
         .map_err(|e| phonecam_core::Error::internal(format!("gagal spawn server: {e}")))?;
 
+    // B9.2: listener HTTP mode ADB (127.0.0.1:8080) berjalan bersamaan
+    // dengan server HTTPS. `adb reverse` dijalankan lewat UI (endpoint
+    // /api/adb/reverse) dan dihapus saat aplikasi keluar (AdbReverseGuard).
+    let state_for_adb = app_state.clone();
+    std::thread::Builder::new()
+        .name("phonecam-adb".into())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!(?e, "gagal membuat runtime ADB");
+                    return;
+                }
+            };
+            rt.block_on(async move {
+                if let Err(e) = phonecam_desktop::adb_mode::serve(state_for_adb).await {
+                    tracing::error!(?e, "listener ADB berhenti dengan error");
+                }
+            });
+        })
+        .map_err(|e| phonecam_core::Error::internal(format!("gagal spawn listener ADB: {e}")))?;
+
     // B1: tunggu port HTTPS dipilih (fallback bila 8443 sibuk).
     let port = wait_for_port(&app_state, std::time::Duration::from_secs(5));
 

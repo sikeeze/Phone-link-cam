@@ -568,6 +568,12 @@ function CableWizard({
             ✓ Perangkat terdeteksi lewat kabel.
           </p>
         )}
+        {wizard.platform === "android" && isLast && (
+          <p class="subtitle" style="margin: 0">
+            Buka <code>http://localhost:8080</code> di browser HP, lalu masukkan
+            PIN seperti biasa (B9.2).
+          </p>
+        )}
         <div class="wizard-actions">
           <button class="btn" onClick={onClose}>
             Batal
