@@ -2,6 +2,7 @@ import { render } from "preact";
 import { useEffect, useState, useCallback } from "preact/hooks";
 
 import { DesktopState, SourceRow, ConnectionsState } from "./types";
+import { WizardState, ANDROID_STEPS, IPHONE_STEPS } from "./wizard";
 import "./desktop.css";
 
 type Screen = "home" | "cameras" | "studio" | "connections" | "settings";
@@ -380,6 +381,7 @@ function Connections() {
   const [conns, setConns] = useState<ConnectionsState | null>(null);
   const [autoMove, setAutoMove] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [wizard, setWizard] = useState<WizardState | null>(null);
 
   // B9.1: polling tiap 3 detik (constants::timing::INTERFACE_POLL_SECS).
   const refresh = useCallback(async () => {
@@ -476,7 +478,7 @@ function Connections() {
           "Aktifkan Personal Hotspot di iPhone, sambungkan kabel, ketuk Percayai.",
           "40-100 ms",
           "Panduan",
-          () => setAutoMove(false),
+          () => setWizard({ platform: "iphone", step: 0 }),
           hotspot != null,
         )}
         {card(
@@ -485,10 +487,26 @@ function Connections() {
           "Android: aktifkan USB tethering; PC mendapat antarmuka baru.",
           "40-100 ms",
           "Panduan",
-          () => setAutoMove(false),
+          () => setWizard({ platform: "android", step: 0 }),
           tether != null,
         )}
       </div>
+      {wizard && (
+        <CableWizard
+          wizard={wizard}
+          adbReady={conns?.adb?.ready ?? false}
+          busy={busy}
+          onClose={() => setWizard(null)}
+          onNext={() => {
+            const steps = wizard.platform === "android" ? ANDROID_STEPS : IPHONE_STEPS;
+            if (wizard.step >= steps.length - 1) {
+              setWizard(null);
+            } else {
+              setWizard({ ...wizard, step: wizard.step + 1 });
+            }
+          }}
+        />
+      )}
       <div class="card settings-section">
         <div class="setting-row">
           <span>Pindah otomatis bila koneksi putus</span>
@@ -504,6 +522,62 @@ function Connections() {
         </p>
       </div>
     </>
+  );
+}
+
+/**
+ * Wizard kabel (README C4): stepper 3 langkah per jenis HP.
+ * ponytail: deteksi otomatis hanya untuk langkah terakhir Android (status
+ * adb.ready dari /api/connections); langkah lain manual karena tidak ada
+ * API web yang bisa membaca setelan HP.
+ */
+function CableWizard({
+  wizard,
+  adbReady,
+  busy,
+  onClose,
+  onNext,
+}: {
+  wizard: WizardState;
+  adbReady: boolean;
+  busy: boolean;
+  onClose: () => void;
+  onNext: () => void;
+}) {
+  const steps = wizard.platform === "android" ? ANDROID_STEPS : IPHONE_STEPS;
+  const isLast = wizard.step >= steps.length - 1;
+  // Langkah terakhir Android terpenuhi otomatis saat adb mendeteksi perangkat.
+  const detected = wizard.platform === "android" && isLast && adbReady;
+  return (
+    <div class="wizard-overlay" role="dialog" aria-label="Panduan kabel USB">
+      <div class="card wizard-card">
+        <h2>{wizard.platform === "android" ? "Kabel USB Android" : "Kabel USB iPhone"}</h2>
+        <div class="wizard-dots" aria-hidden="true">
+          {steps.map((_, i) => (
+            <span key={i} class={`wizard-dot${i <= wizard.step ? " done" : ""}`} />
+          ))}
+        </div>
+        <p class="wizard-step">
+          <strong>
+            Langkah {wizard.step + 1}/{steps.length}.
+          </strong>{" "}
+          {steps[wizard.step]}
+        </p>
+        {detected && (
+          <p class="subtitle" style="margin: 0">
+            ✓ Perangkat terdeteksi lewat kabel.
+          </p>
+        )}
+        <div class="wizard-actions">
+          <button class="btn" onClick={onClose}>
+            Batal
+          </button>
+          <button class="btn primary" onClick={onNext} disabled={busy}>
+            {isLast ? "Selesai" : "Lanjut"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

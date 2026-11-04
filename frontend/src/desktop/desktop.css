@@ -508,3 +508,48 @@ fieldset {
   background: rgba(255, 255, 255, 0.08);
   color: var(--muted, #9aa4b2);
 }
+
+/* C4: wizard kabel — stepper 3 langkah. */
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 40;
+}
+.wizard-card {
+  max-width: 480px;
+  width: calc(100% - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.wizard-dots {
+  display: flex;
+  gap: 8px;
+}
+.wizard-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+.wizard-dot.done {
+  background: var(--accent, #4f8cff);
+}
+.wizard-step {
+  margin: 0;
+  line-height: 1.5;
+}
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.btn.primary {
+  background: var(--accent, #4f8cff);
+  color: #fff;
+  border-color: transparent;
+}
