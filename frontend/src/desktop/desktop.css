@@ -622,3 +622,57 @@ fieldset {
   background: #8a3a3a;
   color: #ffd6d6;
 }
+
+/* B6: transisi crossfade/slide nyata pada preview Studio. */
+.preview .preview-name {
+  position: absolute;
+  bottom: var(--s3);
+  left: var(--s3);
+  padding: 2px var(--s2);
+  border-radius: var(--r-pill);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Layer masuk: mulai dari kondisi awal transisi. */
+.preview .preview-name.entering.t-crossfade {
+  animation: pc-fade-in var(--dur, 200ms) ease-out both;
+}
+.preview .preview-name.entering.t-slide {
+  animation: pc-slide-in var(--dur, 200ms) ease-out both;
+}
+/* Layer keluar: menuju kondisi akhir transisi. */
+.preview .preview-name.exiting.t-crossfade {
+  animation: pc-fade-out var(--dur, 200ms) ease-in both;
+}
+.preview .preview-name.exiting.t-slide {
+  animation: pc-slide-out var(--dur, 200ms) ease-in both;
+}
+
+@keyframes pc-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pc-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes pc-slide-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes pc-slide-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-24px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* A11y: transisi nonaktif — cut instan. */
+  .preview .preview-name.entering,
+  .preview .preview-name.exiting {
+    animation: none;
+  }
+}

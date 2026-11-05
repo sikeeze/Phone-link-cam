@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { useEffect, useState, useCallback } from "preact/hooks";
+import { useEffect, useState, useCallback, useRef } from "preact/hooks";
 
 import { DesktopState, SourceRow, ConnectionsState } from "./types";
 import { WizardState, ANDROID_STEPS, IPHONE_STEPS } from "./wizard";
@@ -274,6 +274,33 @@ function Studio({ sources }: { sources: SourceRow[] }) {
   const active = sources.find((s) => s.role === "active") ?? sources[0];
   const [transition, setTransition] = useState<Transition>("cut");
   const [durationMs, setDurationMs] = useState(200);
+  /**
+   * B6: transisi crossfade/slide nyata. Saat sumber aktif berganti, nama
+   * sumber lama tetap tampil di layer bawah sementara nama baru animasi
+   * masuk sesuai transisi + durasi yang dipilih. Cut = tanpa animasi.
+   * ponytail: pratinjau video masih placeholder (fase 1); saat vcam
+   * menayangkan frame, ganti `label` ini dengan elemen video.
+   */
+  const [prevName, setPrevName] = useState<string | null>(null);
+  const [entering, setEntering] = useState(false);
+  const activeIdRef = useRef<string | null>(active?.id ?? null);
+  const activeNameRef = useRef<string | null>(active?.name ?? null);
+  if (active && active.id !== activeIdRef.current) {
+    activeIdRef.current = active.id;
+    // B6: simpan nama sumber lama untuk layer keluar transisi.
+    setPrevName(activeNameRef.current);
+    activeNameRef.current = active.name;
+    setEntering(true);
+  }
+  // Animasi selesai setelah durasi transisi; layer keluar dibersihkan.
+  useEffect(() => {
+    if (!entering) return;
+    const id = window.setTimeout(() => {
+      setEntering(false);
+      setPrevName(null);
+    }, durationMs);
+    return () => window.clearTimeout(id);
+  }, [entering, durationMs]);
 
   // B7: hotkey 1-6 memilih sumber saat aplikasi fokus.
   useEffect(() => {
@@ -308,9 +335,26 @@ function Studio({ sources }: { sources: SourceRow[] }) {
       <h1>Studio</h1>
       <p class="subtitle">Preview output dan kontrol kamera aktif (B6/B7).</p>
       <div class="studio-grid">
-        <div class="preview">
+        <div class="preview" data-transition={transition}>
           <span class="live-label">LIVE</span>
-          {active && <span class="preview-name">{active.name}</span>}
+          {/* B6: layer keluar (sumber lama) — fade/slide out saat diganti. */}
+          {prevName !== null && (
+            <span
+              class={`preview-name exiting t-${transition}`}
+              style={{ ["--dur" as string]: `${durationMs}ms` }}
+            >
+              {prevName}
+            </span>
+          )}
+          {/* B6: layer masuk (sumber aktif). cut = langsung, crossfade/slide = animasi. */}
+          {active && (
+            <span
+              class={`preview-name${entering && transition !== "cut" ? ` entering t-${transition}` : ""}`}
+              style={{ ["--dur" as string]: `${durationMs}ms` }}
+            >
+              {active.name}
+            </span>
+          )}
         </div>
         <div class="card control-panel">
           <fieldset>
