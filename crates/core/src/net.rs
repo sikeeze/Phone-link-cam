@@ -23,7 +23,9 @@ pub fn is_private_ipv4(addr: &Ipv4Addr) -> bool {
         || o[0] == 127
 }
 
-/// True jika IP ini aman untuk bind server pairing (B1).
+/// True jika IP ini aman untuk bind server pairing (B1). Link-local dan
+/// APIPA tetap dianggap bindable (B1 asli menyebut 169.254/16); pemilihan
+/// URL pairing memakai `is_pairing_addr` yang lebih ketat.
 pub fn is_bindable(addr: &IpAddr) -> bool {
     match addr {
         IpAddr::V4(v4) => is_private_ipv4(v4),
@@ -32,6 +34,36 @@ pub fn is_bindable(addr: &IpAddr) -> bool {
             let seg = v6.segments();
             (seg[0] & 0xFFC0) == 0xFE80 || v6.is_loopback()
         }
+    }
+}
+
+/// True bila IPv6 link-local (`fe80::/10`) — butuh scope id eksplisit
+/// saat bind di Windows dan tidak berguna sebagai URL pairing.
+pub fn is_link_local_v6(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xFFC0) == 0xFE80,
+        IpAddr::V4(_) => false,
+    }
+}
+
+/// True bila IPv4 APIPA (`169.254.0.0/16`) — muncul justru saat antarmuka
+/// tidak mendapat DHCP (tidak ada gateway, bukan jalur pairing).
+pub fn is_apipa(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            o[0] == 169 && o[1] == 254
+        }
+        IpAddr::V6(_) => false,
+    }
+}
+
+/// Kandidat URL pairing (B1/B9.1): IP privat `biasa` — link-local dan APIPA
+/// dibuang karena tidak bisa diakses lintas perangkat tanpa scope id.
+pub fn is_pairing_addr(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => is_private_ipv4(v4) && !is_apipa(&IpAddr::V4(*v4)),
+        IpAddr::V6(v6) => v6.is_loopback() || !is_link_local_v6(&IpAddr::V6(*v6)),
     }
 }
 
@@ -116,13 +148,17 @@ pub fn quality_badge(rtt_ms: Option<u32>) -> Option<&'static str> {
 }
 
 /// Daftar antarmuka privat yang bisa dipakai server pairing (B1/B9.1).
-/// Menggunakan local_ip_address::list_afinet_netifas (terverifikasi di docs.rs).
+///
+/// IPv6 link-local (`fe80::/10`) dan IPv4 APIPA (`169.254.0.0/16`) dibuang:
+/// link-local butuh scope id eksplisit (gagal di-bind di Windows dan tidak
+/// bisa dipakai HP sebagai URL pairing tanpa scope), sedangkan APIPA muncul
+/// justru saat antarmuka tidak mendapat DHCP.
 pub fn list_private_interfaces() -> Result<Vec<NetworkInterface>> {
     let ifas = local_ip_address::list_afinet_netifas()
         .map_err(|e| Error::Net(format!("gagal enumerasi antarmuka: {e}")))?;
     let mut out: Vec<NetworkInterface> = Vec::new();
     for (name, ip) in ifas {
-        if !is_bindable(&ip) {
+        if !is_pairing_addr(&ip) {
             continue;
         }
         // B9.1: klasifikasi subnet tethering/hotspot berdasarkan IP (B9.3),
@@ -309,6 +345,16 @@ mod tests {
         // Pada mesin uji umumnya ada loopback dan minimal satu antarmuka.
         let ifas = list_private_interfaces();
         assert!(ifas.is_ok(), "{ifas:?}");
+    }
+
+    #[test]
+    fn pairing_addr_rejects_link_local_and_apipa() {
+        // fe80:: dan 169.254.x.x tidak berguna sebagai URL pairing (B1).
+        assert!(!is_pairing_addr(&"fe80::1".parse::<IpAddr>().unwrap()));
+        assert!(!is_pairing_addr(&"169.254.1.1".parse::<IpAddr>().unwrap()));
+        assert!(is_pairing_addr(&"192.168.1.1".parse::<IpAddr>().unwrap()));
+        assert!(is_pairing_addr(&"::1".parse::<IpAddr>().unwrap()));
+        assert!(!is_pairing_addr(&"8.8.8.8".parse::<IpAddr>().unwrap()));
     }
 
     #[test]

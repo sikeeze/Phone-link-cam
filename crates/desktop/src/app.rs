@@ -50,6 +50,10 @@ pub struct AppState {
     /// Pindah otomatis ke jalur berikutnya saat koneksi putus (B9.1:
     /// default mati; diaktifkan dari layar Koneksi).
     pub auto_failover: RwLock<bool>,
+    /// Port listener HTTP mode ADB aktual (B9.2: fallback bila 8080 sibuk;
+    /// ditulis sekali oleh `adb_mode::serve`). `adb reverse` mengikat port
+    /// ini, dan `/api/connections` membacanya untuk `pair_url` adb.
+    pub adb_port: RwLock<Option<u16>>,
 }
 
 impl AppState {
@@ -68,6 +72,7 @@ impl AppState {
             keyframe_waits: RwLock::new(HashMap::new()),
             adb_reverse: parking_lot::Mutex::new(None),
             auto_failover: RwLock::new(false),
+            adb_port: RwLock::new(None),
         }
     }
 

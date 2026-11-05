@@ -25,7 +25,11 @@ use crate::server;
 /// mencapai listener ini lewat localhost. `drop` dari `AdbReverseGuard`
 /// menghapus forwarding — dipakai saat sesi berakhir.
 pub async fn serve(app_state: Arc<AppState>) -> Result<()> {
-    let port = phonecam_core::constants::port::ADB_HTTP;
+    // B9.2: port 8080 default; bila sibuk (konflik umum dengan Docker/WSL
+    // di mesin pengguna), cari port kosong berikutnya dan catat di state
+    // agar `adb reverse` dan `/api/connections` memakai port yang sama.
+    let port = pick_adb_port(phonecam_core::constants::port::ADB_HTTP);
+    *app_state.adb_port.write() = Some(port);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
     // B9.2 poin 6: tolak Host header selain localhost/127.0.0.1.
@@ -44,6 +48,19 @@ pub async fn serve(app_state: Arc<AppState>) -> Result<()> {
     .await
     .map_err(|e| anyhow!("listener ADB berhenti: {e}"))?;
     Ok(())
+}
+
+/// B9.2: cari port loopback kosong mulai dari `base` (maks +64).
+fn pick_adb_port(mut base: u16) -> u16 {
+    for _ in 0..64 {
+        let addr = SocketAddr::from(([127, 0, 0, 1], base));
+        if std::net::TcpListener::bind(addr).is_ok() {
+            return base;
+        }
+        base = base.wrapping_add(1);
+    }
+    // Fallback: pakai base meski nantinya bind gagal — log mencatatnya.
+    phonecam_core::constants::port::ADB_HTTP
 }
 
 /// Middleware B9.2 poin 6: hanya permintaan dari localhost yang diperbolehkan.

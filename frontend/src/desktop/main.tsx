@@ -545,7 +545,7 @@ function Connections() {
           adb ? (adb.ready ? "Aktif" : adb.unauthorized ? "Perlu setup" : "Terdeteksi") : "Tidak tersedia",
           adb?.unauthorized
             ? 'Setujui dialog "Izinkan debugging USB" di HP.'
-            : "Mode ADB: HP membuka localhost:8080 lewat adb reverse.",
+            : `Mode ADB: HP membuka ${adb?.pair_url ?? "http://localhost:8080"} lewat adb reverse.`,
           "40-100 ms",
           "Siapkan",
           useAdb,
@@ -596,8 +596,9 @@ function Connections() {
       {wizard && (
         <CableWizard
           wizard={wizard}
-          adbReady={conns?.adb?.ready ?? false}
-          busy={busy}
+            adbReady={conns?.adb?.ready ?? false}
+            adbUrl={conns?.adb?.pair_url ?? "http://localhost:8080"}
+            busy={busy}
           onClose={() => setWizard(null)}
           onNext={() => {
             const steps = wizard.platform === "android" ? ANDROID_STEPS : IPHONE_STEPS;
@@ -636,12 +637,15 @@ function Connections() {
 function CableWizard({
   wizard,
   adbReady,
+  adbUrl,
   busy,
   onClose,
   onNext,
 }: {
   wizard: WizardState;
   adbReady: boolean;
+  /** B9.2: URL listener ADB aktual (fallback port bila 8080 sibuk). */
+  adbUrl: string;
   busy: boolean;
   onClose: () => void;
   onNext: () => void;
@@ -672,8 +676,8 @@ function CableWizard({
         )}
         {wizard.platform === "android" && isLast && (
           <p class="subtitle" style="margin: 0">
-            Buka <code>http://localhost:8080</code> di browser HP, lalu masukkan
-            PIN seperti biasa (B9.2).
+            Buka <code>{adbUrl}</code> di browser HP, lalu masukkan PIN seperti
+            biasa (B9.2).
           </p>
         )}
         <div class="wizard-actions">

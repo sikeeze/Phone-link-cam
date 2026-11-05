@@ -18,7 +18,7 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
 
-use phonecam_core::net::list_private_interfaces;
+use phonecam_core::net::{is_apipa, is_link_local_v6, list_private_interfaces};
 
 use crate::app::AppState;
 use crate::assets;
@@ -92,14 +92,20 @@ fn pick_free_port(mut base: u16, ips: &[IpAddr]) -> phonecam_core::Result<u16> {
     ))
 }
 
-/// Daftar IP untuk bind (B1: hanya antarmuka privat).
+/// Daftar IP untuk bind (B1: hanya antarmuka privat yang bisa di-bind).
+///
+/// IPv6 link-local (`fe80::/10`) dan IPv4 APIPA (`169.254.0.0/16`) sengaja
+/// dibuang: link-local butuh scope id eksplisit saat bind (gagal di Windows)
+/// dan APIPA muncul saat antarmuka tidak punya DHCP — tidak pernah menjadi
+/// jalur pairing yang berguna.
 fn bind_ips() -> phonecam_core::Result<Vec<IpAddr>> {
     let mut ips = Vec::new();
     for iface in list_private_interfaces()? {
         for ip in iface.addrs {
-            if !ips.contains(&ip) {
-                ips.push(ip);
+            if is_link_local_v6(&ip) || is_apipa(&ip) || ips.contains(&ip) {
+                continue;
             }
+            ips.push(ip);
         }
     }
     if ips.is_empty() {
@@ -339,11 +345,16 @@ async fn api_connections(State(state): State<Arc<AppState>>) -> axum::Json<serde
     // B9.2: adb opsional — None kalau binary tidak ada di PATH.
     let adb = crate::adb::Adb::detect().map(|a| {
         let st = a.state().ok();
+        // B9.2: port aktual listener ADB (fallback bila 8080 sibuk).
+        let adb_port = state
+            .adb_port
+            .read()
+            .unwrap_or(phonecam_core::constants::port::ADB_HTTP);
         serde_json::json!({
             "ready": st == Some(crate::adb::AdbState::Ready),
             "unauthorized": st == Some(crate::adb::AdbState::Unauthorized),
             // B9.2: mode ADB tidak punya IP antarmuka; HP membuka localhost.
-            "pair_url": format!("http://localhost:{}", phonecam_core::constants::port::ADB_HTTP),
+            "pair_url": format!("http://localhost:{adb_port}"),
         })
     });
     axum::Json(serde_json::json!({
@@ -362,7 +373,13 @@ async fn api_adb_reverse(State(state): State<Arc<AppState>>) -> axum::response::
         Some(a) => a,
         None => return (axum::http::StatusCode::NOT_FOUND).into_response(),
     };
-    match crate::adb_mode::AdbReverseGuard::new(db, phonecam_core::constants::port::ADB_HTTP) {
+    match crate::adb_mode::AdbReverseGuard::new(
+        db,
+        state
+            .adb_port
+            .read()
+            .unwrap_or(phonecam_core::constants::port::ADB_HTTP),
+    ) {
         Ok(guard) => {
             *state.adb_reverse.lock() = Some(guard);
             (axum::http::StatusCode::NO_CONTENT).into_response()
@@ -528,15 +545,18 @@ async fn api_source_rename(
 /// pertama (B9.1: URL memakai IP antarmuka jalur ini).
 fn lan_host(state: &Arc<AppState>) -> String {
     let port = state.https_port.read().unwrap_or(settings_default_port());
-    match list_private_interfaces() {
-        Ok(ifs) => ifs
-            .iter()
-            .flat_map(|i| i.addrs.iter().copied())
-            .next()
-            .map(|ip| format!("{ip}:{port}"))
-            .unwrap_or_else(|| format!("localhost:{port}")),
-        Err(_) => format!("localhost:{port}"),
-    }
+    // B1: cari IP privat non-loopback pertama (fe80/APIPA sudah tersaring
+    // oleh list_private_interfaces); fallback ke localhost untuk mode ADB.
+    let host = list_private_interfaces()
+        .ok()
+        .and_then(|ifs| {
+            ifs.iter()
+                .flat_map(|i| i.addrs.iter().copied())
+                .find(|ip| !ip.is_loopback())
+        })
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| "localhost".to_string());
+    format!("{host}:{port}")
 }
 
 /// Port default dari pengaturan (B1) sebagai cadangan sebelum `serve`

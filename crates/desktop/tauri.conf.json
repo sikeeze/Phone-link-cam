@@ -5,16 +5,6 @@
   "identifier": "com.phonecam.desktop",
   "build": {},
   "app": {
-    "windows": [
-      {
-        "title": "PhoneCam",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 900,
-        "minHeight": 600,
-        "resizable": true
-      }
-    ],
     "security": {
       "csp": null
     }
