@@ -85,6 +85,11 @@ pub struct Session {
     quality: QualityMonitor,
     /// Penerima sequence number RTP dari pipeline video (B5: pengukuran loss).
     seq_rx: Option<tokio::sync::mpsc::UnboundedReceiver<u16>>,
+    /// Decoder khusus transport ws-webcodecs (B9.2.4). Dibuat saat auth
+    /// berhasil dengan transport WsWebCodecs; memproses pesan biner WS.
+    ws_decoder: Option<Box<dyn phonecam_media::decode::VideoDecoder>>,
+    /// Handle vcam untuk transport ws-webcodecs (B9.2.4).
+    ws_vcam: Option<std::sync::Arc<dyn phonecam_vcam::VCam>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +114,8 @@ impl Session {
             bye_received: false,
             quality: QualityMonitor::default(),
             seq_rx: None,
+            ws_decoder: None,
+            ws_vcam: None,
         }
     }
 
@@ -161,9 +168,20 @@ impl Session {
                         let res = self.handle_text(&text, &ctx, &ip, &mut tx).await;
                         if res.is_break() { break; }
                     }
-                    Some(Ok(Message::Binary(_))) => {
-                        // B4: pesan biner diabaikan (media lewat UDP/WebRTC).
-                        tracing::debug!("mengabaiki pesan biner dari {ip}");
+                    Some(Ok(Message::Binary(bytes))) => {
+                        // B9.2.4: ws-webcodecs — pesan biner adalah frame video
+                        // H.264 (EncodedVideoChunk dari WebCodecs HP). Hanya
+                        // diproses bila transport sesi adalah WsWebCodecs.
+                        last_msg = Instant::now();
+                        // B4: batasi ukuran pesan biner (16 KiB).
+                        if bytes.len() > MAX_MESSAGE_BYTES {
+                            tracing::warn!(
+                                len = bytes.len(),
+                                "frame biner melebihi batas dari {ip}; dibuang"
+                            );
+                            continue;
+                        }
+                        self.on_ws_frame(&bytes, &ctx, &ip).await;
                     }
                     Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
                         last_msg = Instant::now();
@@ -394,26 +412,45 @@ impl Session {
                         if let Ok(text) = msg {
                             let _ = tx.send(Message::Text(text.into())).await;
                         }
-                        // B4: siapkan peer connection WebRTC (answerer) setelah
-                        // auth berhasil. Kegagalan tidak fatal — HP tetap bisa
-                        // mencoba offer; error dibalas per pesan.
-                        // B1: bind ke IP antarmuka privat yang menuju HP.
-                        let (ice_tx, ice_rx) = tokio::sync::mpsc::unbounded_channel::<SignalOut>();
-                        let (track_tx, track_rx) = tokio::sync::mpsc::unbounded_channel::<
-                            std::sync::Arc<dyn TrackRemote>,
-                        >();
-                        let bind_ip = phonecam_core::net::bind_ip_for_peer(
-                            &ip.parse()
-                                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
-                        );
-                        match Peer::new(bind_ip, 0, ice_tx, track_tx).await {
-                            Ok(peer) => {
-                                self.peer = Some(peer);
-                                self.ice_rx = Some(ice_rx);
-                                self.track_rx = Some(track_rx);
+                        // B4: siapkan transport media sesuai `hello.transport`.
+                        // Kegagalan tidak fatal — HP tetap bisa mencoba offer;
+                        // error dibalas per pesan.
+                        let transport = self
+                            .pending_hello
+                            .as_ref()
+                            .map(|h| h.transport)
+                            .unwrap_or_default();
+                        match transport {
+                            phonecam_core::protocol::Transport::WebRtc => {
+                                // B1: bind ke IP antarmuka privat yang menuju HP.
+                                let (ice_tx, ice_rx) =
+                                    tokio::sync::mpsc::unbounded_channel::<SignalOut>();
+                                let (track_tx, track_rx) = tokio::sync::mpsc::unbounded_channel::<
+                                    std::sync::Arc<dyn TrackRemote>,
+                                >();
+                                let bind_ip =
+                                    phonecam_core::net::bind_ip_for_peer(&ip.parse().unwrap_or(
+                                        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                                    ));
+                                match Peer::new(bind_ip, 0, ice_tx, track_tx).await {
+                                    Ok(peer) => {
+                                        self.peer = Some(peer);
+                                        self.ice_rx = Some(ice_rx);
+                                        self.track_rx = Some(track_rx);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            ?e,
+                                            "gagal membuat peer connection untuk {ip}"
+                                        );
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                tracing::warn!(?e, "gagal membuat peer connection untuk {ip}");
+                            phonecam_core::protocol::Transport::WsWebCodecs => {
+                                // B9.2.4: tidak ada peer connection — frame video
+                                // datang sebagai pesan biner WS di sesi ini dan
+                                // didekode langsung (lihat `spawn_ws_video`).
+                                tracing::info!(%ip, "transport ws-webcodecs (mode ADB)");
                             }
                         }
                         // B2: catat source_id milik koneksi ini; dipakai cleanup
@@ -537,6 +574,74 @@ impl Session {
             }
         }
         let _ = sink.await;
+    }
+
+    /// Terima satu frame video dari pesan biner WS (B9.2.4: ws-webcodecs).
+    ///
+    /// Byte payload = `EncodedVideoChunk` H.264 (avcC; thumbnail: sama
+    /// formatnya dengan input MfDecoder). Decoder dan vcam dibuat saat frame
+    /// pertama tiba agar kegagalan init tidak menahan proses auth.
+    async fn on_ws_frame(&mut self, bytes: &[u8], ctx: &Arc<AppState>, ip: &str) {
+        // Hanya transport ws-webcodecs yang memproses frame biner.
+        let is_ws = self
+            .pending_hello
+            .as_ref()
+            .map(|h| h.transport == phonecam_core::protocol::Transport::WsWebCodecs)
+            .unwrap_or(false);
+        if !is_ws {
+            tracing::trace!(%ip, "frame biner diabaikan (transport bukan ws-webcodecs)");
+            return;
+        }
+        // B6: hanya sumber aktif yang di-decode ke output vcam.
+        let is_active = match self.source_id.as_deref() {
+            Some(id) => ctx
+                .sources
+                .read()
+                .get(id)
+                .map(|s| s.role == phonecam_core::protocol::SourceRole::Active)
+                .unwrap_or(false),
+            None => true,
+        };
+        if !is_active {
+            return; // ponytail: sumber preview hanya dibuang (B6 drain).
+        }
+        // Init lazy: decoder MF + vcam global.
+        if self.ws_decoder.is_none() {
+            match phonecam_media::decode_win::MfDecoder::new() {
+                Ok(d) => {
+                    self.ws_decoder =
+                        Some(Box::new(d) as Box<dyn phonecam_media::decode::VideoDecoder>)
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "dekoder MF tidak tersedia untuk ws-webcodecs");
+                    return;
+                }
+            }
+        }
+        if self.ws_vcam.is_none() {
+            match ctx.vcam_or_start().await {
+                Ok(v) => self.ws_vcam = Some(v),
+                Err(e) => {
+                    tracing::warn!(?e, "gagal memulai vcam untuk ws-webcodecs");
+                    return;
+                }
+            }
+        }
+        let Some(decoder) = self.ws_decoder.as_mut() else {
+            return;
+        };
+        let decoded = match decoder.decode(bytes) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::trace!(?e, "decode frame ws-webcodecs gagal; dibuang");
+                return;
+            }
+        };
+        if let Some(vcam) = self.ws_vcam.as_ref() {
+            if let Err(e) = vcam.push_frame(&decoded.data).await {
+                tracing::warn!(?e, "gagal push frame ws-webcodecs ke vcam");
+            }
+        }
     }
 
     /// Fase LIVE: pesan signaling media (B4).

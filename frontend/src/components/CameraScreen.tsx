@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 
 import type { Signaling, ConnStatus } from "../signaling";
-import { MsgType, type CameraFacing } from "../types";
+import { MsgType, type CameraFacing, type Transport } from "../types";
 import { CameraPeer } from "../webrtc";
+import { WebCodecsCamera } from "../webcodecs";
 import { useBattery, useWakeLock, useSignalBar } from "../hooks";
 import { ReconnectOverlay } from "./ReconnectOverlay";
 
@@ -10,6 +11,8 @@ interface Props {
   path?: string;
   default?: boolean;
   signaling: Signaling | null;
+  /** Transport media yang dipakai sesi ini (B9.2.4). */
+  transport: Transport;
 }
 
 /**
@@ -21,7 +24,7 @@ interface Props {
  * ponytail: torch/zoom preset memakai track capabilities — native toggle
  * tanpa UI preset B5 lanjutan (fase 3).
  */
-export function CameraScreen({ signaling }: Props) {
+export function CameraScreen({ signaling, transport }: Props) {
   const [torchOn, setTorchOn] = useState(false);
   const [status, setStatus] = useState("Menghubungkan…");
   const [facing, setFacing] = useState<CameraFacing>("back");
@@ -29,6 +32,7 @@ export function CameraScreen({ signaling }: Props) {
   const [overlayVisible, setOverlayVisible] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const peerRef = useRef<CameraPeer | null>(null);
+  const camRef = useRef<WebCodecsCamera | null>(null);
   const hideTimer = useRef<number | null>(null);
 
   // D4: indikator baterai + sinyal; Wake Lock aktif selama siaran.
@@ -49,6 +53,32 @@ export function CameraScreen({ signaling }: Props) {
       return;
     }
     setStatus("Memulai kamera…");
+    if (transport === "ws-webcodecs") {
+      // B9.2.4: encode H.264 WebCodecs + kirim biner lewat WS signaling.
+      const cam = new WebCodecsCamera(signaling);
+      camRef.current = cam;
+      cam
+        .start()
+        .then((stream) => {
+          if (videoRef.current) videoRef.current.srcObject = stream;
+          setStatus("Siaran aktif");
+        })
+        .catch((e: unknown) => {
+          const msg = e instanceof Error ? e.message : String(e);
+          setStatus(`Kamera gagal: ${msg}`);
+        });
+      signaling.on(MsgType.BYE, () => setStatus("PC memutuskan koneksi"));
+      signaling.onStatus((cs) => {
+        setConnStatus(cs);
+        if (cs.kind === "connected") setStatus("Siaran aktif");
+        else if (cs.kind === "reconnecting") setStatus("Menghubungkan ulang…");
+        else if (cs.kind === "closed") setStatus("Koneksi terputus");
+      });
+      return () => {
+        cam.close();
+        camRef.current = null;
+      };
+    }
     const peer = new CameraPeer(signaling);
     peerRef.current = peer;
     peer

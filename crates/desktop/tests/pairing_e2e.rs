@@ -799,3 +799,50 @@ async fn api_source_active_demotes_and_404() {
     let (status, _body) = https_post(&server.addr, "/api/source/tidak-ada/active", "").await;
     assert_eq!(status, 404);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ws_webcodecs_binary_frames_accepted() {
+    // B9.2.4: hello transport ws-webcodecs -> auth -> pesan biner (frame
+    // H.264) diterima tanpa memutuskan sesi; frame tidak di-decode di test
+    // (MfDecoder butuh GPU/D3D) — yang diuji adalah jalur penerimaan.
+    let server = TestServer::start().await;
+    let origin = format!("https://{}", server.addr);
+
+    let mut ws = connect_ws(&server.addr, &origin).await;
+    ws.send(Message::Text(
+        msg(
+            "hello",
+            "{\"device_id\":\"dev-wc\",\"name\":\"HP Web\",\"user_agent\":\"ua\",\"capabilities\":{},\"transport\":\"ws-webcodecs\"}",
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim hello");
+    let pin = server.regenerate_pin();
+    ws.send(Message::Text(
+        msg("auth", &format!("{{\"credential\":{{\"pin\":\"{pin}\"}}}}")).into(),
+    ))
+    .await
+    .expect("kirim auth");
+    let reply = recv_json(&mut ws).await;
+    assert_eq!(reply["type"], "auth_ok", "balasan: {reply}");
+
+    // Kirim beberapa frame biner "H.264" (payload dummy; decode gagal =
+    // dibuang, bukan error sesi).
+    for i in 0u8..5 {
+        let frame = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1F, i];
+        ws.send(Message::Binary(frame.into()))
+            .await
+            .expect("kirim frame biner");
+    }
+
+    // Sesi masih hidup: heartbeat ping -> pong harus terjawab.
+    ws.send(Message::Text(msg("ping", "{}").into()))
+        .await
+        .expect("kirim ping");
+    let reply = recv_json(&mut ws).await;
+    assert_eq!(reply["type"], "pong", "balasan: {reply}");
+
+    // Frame biner bukan ws-webcodecs (transport webrtc) diabaikan.
+    let _ = ws.close(None).await;
+}

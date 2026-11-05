@@ -174,6 +174,14 @@ export class Signaling {
     this.ws.send(JSON.stringify(msg));
   }
 
+  /** Kirim payload biner mentah (B9.2.4: frame ws-webcodecs). */
+  sendBinary(bytes: ArrayBufferLike): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("WebSocket belum terbuka");
+    }
+    this.ws.send(bytes);
+  }
+
   /** Tutup koneksi (tidak menyalahkan reconnect). */
   close(): void {
     this.closed = true;

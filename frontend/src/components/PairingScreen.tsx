@@ -2,6 +2,7 @@ import { useState } from "preact/hooks";
 
 import { Signaling } from "../signaling";
 import { MsgType } from "../types";
+import { webcodecsSupported } from "../webcodecs";
 import type { AuthFailCode } from "../types";
 
 interface Props {
@@ -73,9 +74,11 @@ export function PairingScreen({ onPaired }: Props) {
           zoom: false,
           torch: false,
           camera_switch: false,
-          webcodecs: false,
+          webcodecs: webcodecsSupported(),
         },
-        transport: "webrtc",
+        // B9.2.4: minta ws-webcodecs bila didukung (mode ADB tanpa UDP);
+        // PC boleh menolak dengan TRANSPORT_UNSUPPORTED (B9.4).
+        transport: webcodecsSupported() ? "ws-webcodecs" : "webrtc",
       });
       sig.send(MsgType.AUTH, { credential: { pin } });
     } catch (e) {
