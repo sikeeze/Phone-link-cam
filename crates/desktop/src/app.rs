@@ -47,6 +47,9 @@ pub struct AppState {
     /// Guard `adb reverse` aktif (B9.2: forwarding dihapus saat di-drop,
     /// baik sesi berakhir maupun aplikasi ditutup).
     pub adb_reverse: parking_lot::Mutex<Option<crate::adb_mode::AdbReverseGuard>>,
+    /// Pindah otomatis ke jalur berikutnya saat koneksi putus (B9.1:
+    /// default mati; diaktifkan dari layar Koneksi).
+    pub auto_failover: RwLock<bool>,
 }
 
 impl AppState {
@@ -64,6 +67,7 @@ impl AppState {
             session_cmds: RwLock::new(HashMap::new()),
             keyframe_waits: RwLock::new(HashMap::new()),
             adb_reverse: parking_lot::Mutex::new(None),
+            auto_failover: RwLock::new(false),
         }
     }
 

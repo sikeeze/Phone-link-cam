@@ -397,6 +397,17 @@ function Studio({ sources }: { sources: SourceRow[] }) {
 function Connections() {
   const [conns, setConns] = useState<ConnectionsState | null>(null);
   const [autoMove, setAutoMove] = useState(false);
+  /** B9.1: kirim toggle pindah otomatis ke server (default mati). */
+  const toggleAutoMove = async () => {
+    const next = !autoMove;
+    setAutoMove(next);
+    const res = await fetch("/api/failover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: next }),
+    });
+    if (!res.ok) setAutoMove(false);
+  };
   const [busy, setBusy] = useState(false);
   const [wizard, setWizard] = useState<WizardState | null>(null);
 
@@ -560,12 +571,12 @@ function Connections() {
           <button
             class={`toggle${autoMove ? " on" : ""}`}
             aria-label="Pindah otomatis"
-            onClick={() => setAutoMove((v) => !v)}
+            onClick={() => void toggleAutoMove()}
           />
         </div>
         <p class="subtitle" style="margin: 0">
-          ponytail: urutan prioritas jalur dan auto-failover membutuhkan Connection
-          Manager aktif — default nonaktif (README §E 3B).
+          B9.1: saat koneksi putus, HP mencoba jalur berikutnya dengan token
+          sama (urutan kabel, Wi-Fi, hotspot). Default mati.
         </p>
       </div>
     </>

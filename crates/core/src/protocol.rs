@@ -168,6 +168,14 @@ pub struct AuthOkPayload {
     pub token: String,
     /// Preset kualitas awal (B5).
     pub quality: QualityPreset,
+    /// B9.1: pindah otomatis ke jalur berikutnya saat putus diizinkan.
+    #[serde(default)]
+    pub auto_failover: bool,
+    /// B9.1: URL jalur alternatif terurut per prioritas (kabel dulu).
+    /// HP memakainya bila `auto_failover` aktif dan anggaran reconnect
+    /// B3 di jalur sekarang sudah habis.
+    #[serde(default)]
+    pub alt_paths: Vec<String>,
 }
 
 /// Kode kegagalan auth (B4). String stabil.

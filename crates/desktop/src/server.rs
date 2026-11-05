@@ -135,6 +135,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/source/{id}/keyframe", post(api_source_keyframe))
         // B9.1: daftar jalur koneksi (Wi-Fi/LAN, tethering, hotspot, ADB).
         .route("/api/connections", get(api_connections))
+        // B9.1: toggle pindah otomatis saat koneksi putus (default mati).
+        .route("/api/failover", post(api_failover))
         // B9.2: jalankan adb reverse (mode kabel Android).
         .route("/api/adb/reverse", post(api_adb_reverse))
 }
@@ -279,6 +281,40 @@ async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json:
 /// dengan status adb (B9.2). Diurutkan per prioritas B9.1 (kabel > Wi-Fi)
 /// dan tiap jalur membawa URL pairing-nya sendiri (B9.1: URL memakai IP
 /// antarmuka jalur itu).
+/// `POST /api/failover` — aktifkan/matikan pindah otomatis ke jalur
+/// berikutnya saat koneksi putus (B9.1: default mati). Body: `{"on": true}`.
+async fn api_failover(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl axum::response::IntoResponse {
+    let on = body.get("on").and_then(|v| v.as_bool()).unwrap_or(false);
+    *state.auto_failover.write() = on;
+    (
+        axum::http::StatusCode::NO_CONTENT,
+        if on {
+            "auto-failover aktif"
+        } else {
+            "auto-failover mati"
+        },
+    )
+}
+
+/// B9.1: daftar URL jalur alternatif terurut per prioritas (kabel dulu),
+/// untuk payload `auth_ok` agar HP bisa pindah jalur dengan token sama.
+pub fn alt_paths(state: &Arc<AppState>) -> Vec<String> {
+    let port = state.https_port.read().unwrap_or(settings_default_port());
+    let mut ifas = phonecam_core::net::list_private_interfaces()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| {
+            let host = i.addrs.first().map(|a| a.to_string()).unwrap_or_default();
+            (i.kind.path_priority(), format!("https://{host}:{port}"))
+        })
+        .collect::<Vec<_>>();
+    ifas.sort_by_key(|(p, _)| *p);
+    ifas.into_iter().map(|(_, url)| url).collect()
+}
+
 async fn api_connections(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let port = state.https_port.read().unwrap_or(settings_default_port());
     let mut ifas = phonecam_core::net::list_private_interfaces()

@@ -836,13 +836,66 @@ async fn ws_webcodecs_binary_frames_accepted() {
             .expect("kirim frame biner");
     }
 
-    // Sesi masih hidup: heartbeat ping -> pong harus terjawab.
+    // Sesi masih hidup: heartbeat ping -> pong harus terjawab. Heartbeat
+    // server bisa tiba lebih dulu; loop sampai dapat pong.
     ws.send(Message::Text(msg("ping", "{}").into()))
         .await
         .expect("kirim ping");
-    let reply = recv_json(&mut ws).await;
-    assert_eq!(reply["type"], "pong", "balasan: {reply}");
+    loop {
+        let reply = recv_json(&mut ws).await;
+        if reply["type"] == "pong" {
+            break;
+        }
+        assert!(
+            reply["type"] == "ping",
+            "balasan tak terduga setelah frame biner: {reply}"
+        );
+    }
 
     // Frame biner bukan ws-webcodecs (transport webrtc) diabaikan.
+    let _ = ws.close(None).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn api_failover_toggles_and_auth_ok_carries_paths() {
+    // B9.1: POST /api/failover mengubah flag; auth_ok setelahnya membawa
+    // auto_failover=true + alt_paths terurut (kabel dulu).
+    let server = TestServer::start().await;
+    let origin = format!("https://{}", server.addr);
+
+    // Default mati (README B9.1).
+    assert!(!*server.state.auto_failover.read());
+
+    let (status, _body) = https_post(&server.addr, "/api/failover", "{\"on\":true}").await;
+    assert_eq!(status, 204, "failover on harus 204");
+    assert!(*server.state.auto_failover.read());
+
+    // auth_ok harus membawa alt_paths (interfaces mesin test, mungkin kosong
+    // di CI tanpa NIC privat — yang diuji: flag + field hadir).
+    let mut ws = connect_ws(&server.addr, &origin).await;
+    ws.send(Message::Text(
+        msg(
+            "hello",
+            "{\"device_id\":\"dev-f\",\"name\":\"HP Web\",\"user_agent\":\"ua\",\"capabilities\":{},\"transport\":\"webrtc\"}",
+        )
+        .into(),
+    ))
+    .await
+    .expect("kirim hello");
+    let pin = server.regenerate_pin();
+    ws.send(Message::Text(
+        msg("auth", &format!("{{\"credential\":{{\"pin\":\"{pin}\"}}}}")).into(),
+    ))
+    .await
+    .expect("kirim auth");
+    let reply = recv_json(&mut ws).await;
+    assert_eq!(reply["type"], "auth_ok", "balasan: {reply}");
+    assert_eq!(reply["payload"]["auto_failover"], true, "balasan: {reply}");
+    assert!(reply["payload"]["alt_paths"].is_array(), "balasan: {reply}");
+
+    // Matikan kembali -> 204.
+    let (status, _body) = https_post(&server.addr, "/api/failover", "{\"on\":false}").await;
+    assert_eq!(status, 204);
+    assert!(!*server.state.auto_failover.read());
     let _ = ws.close(None).await;
 }

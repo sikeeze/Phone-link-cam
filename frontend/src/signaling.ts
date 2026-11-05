@@ -37,6 +37,12 @@ export class Signaling {
   private token: string | null = null;
   /** Cara membangun payload hello untuk re-auth (B3). */
   private helloFactory: (() => Record<string, unknown>) | null = null;
+  /** B9.1: pindah otomatis ke jalur berikutnya saat anggaran reconnect habis. */
+  private autoFailover = false;
+  /** B9.1: URL jalur alternatif terurut per prioritas (kabel dulu). */
+  private altPaths: string[] = [];
+  /** Indeks jalur alternatif yang sedang dipakai (0 = jalur asli). */
+  private altIdx = 0;
   private reconnectAttempt = 0;
   private reconnectStartedAt = 0;
   private reconnectTimer: number | null = null;
@@ -63,6 +69,17 @@ export class Signaling {
   setReauth(token: string, helloFactory: () => Record<string, unknown>): void {
     this.token = token;
     this.helloFactory = helloFactory;
+  }
+
+  /**
+   * Simpan auto-failover + jalur alternatif dari `auth_ok` (B9.1).
+   * Saat anggaran reconnect B3 di jalur sekarang habis, koneksi pindah
+   * ke jalur berikutnya dengan token yang sama (sesi tetap, slot tetap).
+   */
+  setFailover(autoFailover: boolean, altPaths: string[]): void {
+    this.autoFailover = autoFailover;
+    this.altPaths = altPaths;
+    this.altIdx = 0;
   }
 
   private emit(s: ConnStatus): void {
@@ -124,6 +141,20 @@ export class Signaling {
     }
     const elapsed = Date.now() - this.reconnectStartedAt;
     if (elapsed >= RECONNECT_BUDGET_MS) {
+      // B9.1: bila auto-failover aktif dan masih ada jalur alternatif,
+      // pindah ke jalur berikutnya dan reset anggaran (token sama, B3).
+      if (this.autoFailover && this.altIdx < this.altPaths.length) {
+        const next = this.altPaths[this.altIdx];
+        this.altIdx += 1;
+        this.url = next;
+        this.reconnectStartedAt = 0;
+        this.reconnectAttempt = 0;
+        this.emit({ kind: "reconnecting", attempt: 1, retryInMs: 500 });
+        window.setTimeout(() => {
+          void this.reconnect();
+        }, 500);
+        return;
+      }
       // B3: anggaran habis -> berhenti; UI menampilkan Coba lagi (D5).
       this.emit({ kind: "closed" });
       return;

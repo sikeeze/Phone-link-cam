@@ -34,6 +34,9 @@ export function App() {
       // B9.2.4: catat transport yang diterima PC (hello echo).
       const t = (msg.payload as { transport?: Transport } | null)?.transport;
       if (t) setTransport(t);
+      // B9.1: auto-failover + jalur alternatif (token sama saat pindah).
+      const fp = msg.payload as { auto_failover?: boolean; alt_paths?: string[] } | null;
+      sig.setFailover(fp?.auto_failover ?? false, fp?.alt_paths ?? []);
       if (token) {
         sig.setReauth(token, () => ({
           device_id: "phone-web",

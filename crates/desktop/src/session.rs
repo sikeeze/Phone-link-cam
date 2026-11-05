@@ -407,6 +407,10 @@ impl Session {
                                 source_id: source_id.clone(),
                                 token,
                                 quality: phonecam_core::protocol::QualityPreset::Balanced,
+                                // B9.1: bawa auto-failover + jalur alternatif
+                                // agar HP bisa pindah jalur dengan token sama.
+                                auto_failover: *ctx.auto_failover.read(),
+                                alt_paths: crate::server::alt_paths(ctx),
                             }),
                         );
                         if let Ok(text) = msg {
