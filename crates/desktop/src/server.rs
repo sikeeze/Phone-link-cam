@@ -139,6 +139,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/source/{id}/rename", post(api_source_rename))
         // B6: minta keyframe sebelum penggantian sumber aktif.
         .route("/api/source/{id}/keyframe", post(api_source_keyframe))
+        // B7: kontrol kamera jarak jauh (cmd_camera: facing, torch).
+        .route("/api/source/{id}/camera", post(api_source_camera))
         // B9.1: daftar jalur koneksi (Wi-Fi/LAN, tethering, hotspot, ADB).
         .route("/api/connections", get(api_connections))
         // B9.1: toggle pindah otomatis saat koneksi putus (default mati).
@@ -268,6 +270,7 @@ async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json:
                 "battery": s.status.battery,
                 "rtt_ms": s.status.rtt_ms,
                 "role": s.role,
+                "thumb": s.status.thumb,
             })
         })
         .collect::<Vec<_>>();
@@ -515,6 +518,58 @@ async fn api_source_keyframe(
             (axum::http::StatusCode::ACCEPTED, "").into_response()
         }
     }
+}
+
+/// `POST /api/source/{id}/camera` — kontrol kamera jarak jauh (B4/B7:
+/// `cmd_camera` ke HP — ganti facing depan/belakang). Fire-and-forget:
+/// ack HP tidak ditunggu karena eksekusinya asinkron di browser.
+async fn api_source_camera(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    {
+        let sources = state.sources.read();
+        if sources.get(&id).is_none() {
+            return (axum::http::StatusCode::NOT_FOUND, "sumber tidak ditemukan").into_response();
+        }
+    }
+    // B4: hanya field yang diberikan body dikirim (serde skip_if_none).
+    let facing = body
+        .get("facing")
+        .and_then(|v| v.as_str())
+        .and_then(|s| match s {
+            "front" => Some(phonecam_core::protocol::CameraFacing::Front),
+            "back" => Some(phonecam_core::protocol::CameraFacing::Back),
+            _ => None,
+        });
+    let torch = body.get("torch").and_then(|v| v.as_bool());
+    if facing.is_none() && torch.is_none() {
+        return (axum::http::StatusCode::BAD_REQUEST, "body kosong").into_response();
+    }
+    let payload = phonecam_core::protocol::CmdCameraPayload {
+        source_id: id.clone(),
+        facing,
+        torch,
+        ..Default::default()
+    };
+    let Ok(text) = phonecam_core::protocol::build(
+        phonecam_core::protocol::types::CMD_CAMERA,
+        None,
+        Some(&payload),
+    ) else {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "gagal build pesan",
+        )
+            .into_response();
+    };
+    let tx_cmd = state.session_cmds.read().get(&id).cloned();
+    let Some(tx_cmd) = tx_cmd else {
+        return (axum::http::StatusCode::CONFLICT, "HP tidak terhubung").into_response();
+    };
+    let _ = tx_cmd.send(text);
+    (axum::http::StatusCode::NO_CONTENT, "").into_response()
 }
 
 /// `POST /api/source/{id}/rename` — ganti nama perangkat (B6).

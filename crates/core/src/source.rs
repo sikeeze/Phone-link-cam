@@ -67,6 +67,10 @@ pub struct SourceStatus {
     /// RTT ke sumber dalam ms (B9.1 badge kualitas).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rtt_ms: Option<u32>,
+    /// Thumbnail statis base64 JPEG (B6: snapshot 2 detik dari HP, tanpa
+    /// decode paralel di PC — diambil dari elemen `video` lewat canvas).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumb: Option<String>,
 }
 
 /// serde default untuk SessionState (B3).

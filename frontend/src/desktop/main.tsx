@@ -413,9 +413,47 @@ function Studio({ sources }: { sources: SourceRow[] }) {
             title={`${s.name} (hotkey ${i + 1})`}
             onClick={() => switchTo(s)}
           >
-            <span class="thumb-num">{i + 1}</span>
+            {/* B6: thumbnail statis base64 JPEG dari HP (snapshot 2 detik). */}
+            {s.thumb ? (
+              <img
+                class="thumb-img"
+                src={`data:image/jpeg;base64,${s.thumb}`}
+                alt=""
+                aria-hidden="true"
+              />
+            ) : (
+              <span class="thumb-num">{i + 1}</span>
+            )}
             <span class="switcher-name">{s.name}</span>
             {s.role === "active" && <span class="live-dot" aria-label="Aktif" />}
+            {/* B7: kontrol jarak jauh cmd_camera — ganti kamera depan/belakang. */}
+            <span
+              class="thumb-flip"
+              role="button"
+              tabindex={0}
+              aria-label={`Ganti kamera ${s.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void fetch(`/api/source/${s.id}/camera`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ facing: "back" }),
+                });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  void fetch(`/api/source/${s.id}/camera`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ facing: "back" }),
+                  });
+                }
+              }}
+            >
+              ⇄
+            </span>
           </button>
         ))}
       </div>

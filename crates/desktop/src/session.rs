@@ -771,9 +771,33 @@ impl Session {
                 ControlFlow::Continue
             }
             types::SOURCE_UPDATE => {
-                // B4: metadata sumber (resolusi, baterai, dll).Status dipakai
-                // fase 3; di sini hanya dicatat.
-                tracing::debug!(t = %dec.msg_type, "source_update dari {ip}");
+                // B4/B6: metadata sumber (resolusi, baterai, thumbnail statis).
+                // Thumbnail base64 JPEG disimpan ke SourceStatus agar UI
+                // switcher menampilkan gambar terkini tanpa decode di PC.
+                if let Some(p) = dec.payload.as_ref() {
+                    if let Ok(v) = serde_json::to_value(p) {
+                        if let Ok(u) =
+                            protocol::payload_from_value::<protocol::SourceUpdatePayload>(&v)
+                        {
+                            if let Some(id) = self.source_id.as_deref() {
+                                let mut sources = ctx.sources.write();
+                                if let Some(s) = sources.get_mut(id) {
+                                    s.status.width = u.width.or(s.status.width);
+                                    s.status.height = u.height.or(s.status.height);
+                                    s.status.fps = u.fps.or(s.status.fps);
+                                    s.status.facing = u.facing.or(s.status.facing);
+                                    s.status.battery =
+                                        u.battery.or(u.battery_level).or(s.status.battery);
+                                    s.status.torch = u.torch.or(s.status.torch);
+                                    s.status.zoom = u.zoom.or(s.status.zoom);
+                                    if u.thumb.is_some() {
+                                        s.status.thumb = u.thumb;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 ControlFlow::Continue
             }
             _ => {

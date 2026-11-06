@@ -244,11 +244,16 @@ pub struct SourceUpdatePayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battery: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery_level: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub torch: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoom: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Thumbnail statis base64 JPEG (B6: snapshot dari elemen video HP).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumb: Option<String>,
 }
 
 /// Arah kamera (B4, `facing`).

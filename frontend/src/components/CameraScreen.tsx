@@ -116,8 +116,31 @@ export function CameraScreen({ signaling, transport }: Props) {
   // D4: kirim level baterai ke PC lewat source_update (B2/D3).
   useEffect(() => {
     if (batteryLevel === null || !signaling) return;
-    signaling.trySend(MsgType.SOURCE_UPDATE, { battery_level: batteryLevel });
+    // B4: field `battery` cocok dengan SourceUpdatePayload Rust.
+    signaling.trySend(MsgType.SOURCE_UPDATE, { battery: batteryLevel });
   }, [batteryLevel, signaling]);
+
+  // B6: kirim thumbnail statis ke PC tiap 2 detik (snapshot elemen video
+  // lewat canvas — JPEG 160px base64; PC menampilkannya di switcher tanpa
+  // decode aktif). ponytail: canvas dipakai hanya bila video sudah berjalan.
+  useEffect(() => {
+    if (!signaling) return;
+    const id = window.setInterval(() => {
+      const video = videoRef.current;
+      if (!video || video.videoWidth === 0) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = 160;
+      canvas.height = Math.round((160 * video.videoHeight) / video.videoWidth);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.4);
+      // Format "data:image/jpeg;base64,..." — PC menyimpan apa adanya.
+      const base64 = dataUrl.split(",")[1] ?? "";
+      if (base64) signaling.trySend(MsgType.SOURCE_UPDATE, { thumb: base64 });
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [signaling]);
 
   // D4: overlay auto-hide 3 detik, muncul saat disentuh.
   const showOverlay = () => {

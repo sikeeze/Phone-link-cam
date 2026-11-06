@@ -21,6 +21,8 @@ export interface SourceRow {
   rtt_ms: number | null;
   /** Peran sumber (B6): "active" | "preview". */
   role: "active" | "preview";
+  /** Thumbnail statis base64 JPEG (B6: snapshot 2 detik dari HP). */
+  thumb?: string | null;
 }
 
 /** Satu antarmuka jaringan privat dari `/api/connections` (B9.1). */

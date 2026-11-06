@@ -451,6 +451,32 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  z-index: 1;
+}
+
+/* B6: thumbnail statis base64 JPEG (snapshot 2 detik dari HP). */
+.switcher-thumb .thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.6;
+}
+
+/* B7: tombol ganti kamera (cmd_camera) di pojok kanan atas thumbnail. */
+.switcher-thumb .thumb-flip {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .live-dot {

@@ -69,26 +69,31 @@ fn main() -> phonecam_core::Result<()> {
         })
         .map_err(|e| phonecam_core::Error::internal(format!("gagal spawn listener ADB: {e}")))?;
 
-    // B1: tunggu port HTTPS dipilih (fallback bila 8443 sibuk).
-    let port = wait_for_port(&app_state, std::time::Duration::from_secs(5));
+    // B1: tunggu port HTTPS dipilih. Bila server gagal mulai (mis. semua
+    // port 8443..+64 sibuk), keluar dengan error eksplisit — membuka jendela
+    // ke port yang sudah mati hanya menyesatkan pengguna (A11: no silent
+    // fallback).
+    let port = wait_for_port(&app_state, std::time::Duration::from_secs(5))?;
 
     run_window(port);
     Ok(())
 }
 
-/// Tunggu `https_port` terisi oleh `serve`; kembali ke port default
-/// bila lewat batas waktu (server mungkin gagal mulai — log mencatatnya).
-fn wait_for_port(state: &phonecam_desktop::AppState, timeout: std::time::Duration) -> u16 {
+/// Tunggu `https_port` terisi oleh `serve`. Timeout berarti server gagal
+/// mulai (binding port) — kembalikan error, bukan port default (B1).
+fn wait_for_port(
+    state: &phonecam_desktop::AppState,
+    timeout: std::time::Duration,
+) -> phonecam_core::Result<u16> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         if let Some(port) = *state.https_port.read() {
-            return port;
+            return Ok(port);
         }
         if std::time::Instant::now() > deadline {
-            tracing::warn!("port HTTPS belum terisi; memakai default");
-            return phonecam_core::settings::Settings::default()
-                .network
-                .https_port;
+            return Err(phonecam_core::Error::internal(
+                "server HTTPS tidak mulai dalam 5 detik; mungkin tidak ada port bebas (lihat log)",
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
