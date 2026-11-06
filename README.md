@@ -431,6 +431,22 @@ Acceptance: every budget has a measured number in the release notes; fresh-machi
 - **Sumber daya:** CPU, RAM, suhu HP setelah 30 menit streaming, penurunan baterai HP.
 - **UI:** mode gelap/terang, reduced motion, resize jendela ke ukuran minimum, keyboard-only, layar HP kecil (360 px) dan besar (430 px).
 
+#### F.1 Daftar cek per-OS (Phase 4)
+
+Tes dijalankan per OS. Target: Windows 10/11 di sini; Linux dan macOS menunggu mesin target.
+
+- **Windows (OBS Virtual Camera):**
+  - [ ] `GET /api/devices` melaporkan `vcam: installed` setelah OBS VC dipasang; `not_installed` sebelumnya.
+  - [ ] Banner onboarding muncul saat `vcam_installed=false`, tombol Pasang memunculkan instruksi terstruktur (judul/penjelasan/aksi), bukan crash.
+  - [ ] Dengan OBS VC terpasang: Zoom, Google Meet, Discord, OBS, dan browser (OmeTV, Umingle) melihat kamera "PhoneCam".
+  - [ ] Virtual mic (WASAPI) muncul sebagai input di aplikasi tujuan; `VMIC_NOT_INSTALLED` bila tidak ada.
+  - [ ] Tray: tutup window menyembunyikan ke tray (proses tetap hidup), menu Tampilkan memunculkan kembali, menu Keluar menutup aplikasi.
+  - [ ] Firewall menolak koneksi HTTPS: pesan `FIREWALL_BLOCKED` muncul, bukan crash.
+  - [ ] Cold start di bawah 2 detik (B2), RAM di bawah 150 MB saat idle (section D budget).
+- **Linux (rencana):** v4l2loopback untuk vcam, PipeWire/Pulse virtual sink untuk vmic. Checklist sama dengan Windows, tambah: modul `v4l2loopback` tidak terpasang -> pesan instalasi jelas.
+- **macOS (rencana):** CoreMediaIO Camera Extension untuk vcam, Core Audio virtual device untuk vmic. Checklist sama, tambah: izin Screen Recording dan Camera Extension install flow.
+
+
 ## Roadmap
 
 | Fase | Hasil | Kriteria selesai |
