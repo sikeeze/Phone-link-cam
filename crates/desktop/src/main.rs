@@ -103,8 +103,16 @@ fn wait_for_port(
 ///
 /// `additional_browser_args` mematikan verifikasi sertifikat WebView2
 /// khusus window ini (hanya memuat `https://localhost` sendiri).
+///
+/// Tray (C2): tutup window disembunyikan ke tray (CloseRequested ->
+/// prevent_close + hide); menu tray: Show/Quit. ponytail: "Start with
+/// Windows" menunggu installer final — butuh path binary stabil (argumen
+/// daemon), di dev path target berubah setiap build.
 #[cfg(target_os = "windows")]
 fn run_window(port: u16) {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+    use tauri::Manager;
     use tauri::WebviewUrl;
     // Format string literal: parse hanya gagal bila port tak valid (tidak
     // mungkin di sini), tapi tangani tetap agar tidak panic (A11).
@@ -114,13 +122,61 @@ fn run_window(port: u16) {
     };
     let url: tauri::Url = url;
     let app = tauri::Builder::default().setup(move |app| {
-        tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.clone()))
-            .title("PhoneCam")
-            .inner_size(1100.0, 720.0)
-            .min_inner_size(900.0, 600.0)
-            .additional_browser_args("--ignore-certificate-errors")
-            .build()
-            .map_err(|e| Box::from(e) as Box<dyn std::error::Error>)?;
+        let window =
+            tauri::WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.clone()))
+                .title("PhoneCam")
+                .inner_size(1100.0, 720.0)
+                .min_inner_size(900.0, 600.0)
+                .additional_browser_args("--ignore-certificate-errors")
+                .build()
+                .map_err(|e| Box::from(e) as Box<dyn std::error::Error>)?;
+
+        // C2: menu tray Show/Quit.
+        let show = MenuItem::with_id(
+            app,
+            phonecam_desktop::tray::MENU_SHOW,
+            "Tampilkan",
+            true,
+            None::<&str>,
+        )?;
+        let quit = MenuItem::with_id(
+            app,
+            phonecam_desktop::tray::MENU_QUIT,
+            "Keluar",
+            true,
+            None::<&str>,
+        )?;
+        let menu = Menu::with_items(app, &[&show, &quit])?;
+        TrayIconBuilder::with_id("phonecam-tray")
+            .icon(tauri::image::Image::from_bytes(
+                phonecam_desktop::tray::TRAY_ICON_PNG,
+            )?)
+            .tooltip("PhoneCam")
+            .menu(&menu)
+            .on_menu_event(|app, event| match event.id().as_ref() {
+                "show" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            })
+            .build(app)?;
+
+        // C2: tombol tutup -> sembunyikan ke tray, bukan keluar.
+        // `on_window_event` meminjam &self: clone window agar closure
+        // bisa dimiliki (WebviewWindow: Clone).
+        let win = window.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = win.hide();
+            }
+        });
         Ok(())
     });
     if let Err(e) = app.run(tauri::generate_context!()) {

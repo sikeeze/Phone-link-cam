@@ -48,7 +48,7 @@ clap = { workspace = true }
 url = { workspace = true }
 local-ip-address = { workspace = true }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
-tauri = { version = "2.11.6", features = ["tray-icon"] }
+tauri = { version = "2.11.6", features = ["tray-icon", "image-png"] }
 
 [build-dependencies]
 tauri-build = "2.6.3"
