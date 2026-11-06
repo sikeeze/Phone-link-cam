@@ -147,6 +147,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/failover", post(api_failover))
         // B9.2: jalankan adb reverse (mode kabel Android).
         .route("/api/adb/reverse", post(api_adb_reverse))
+        // Phase 4: status driver virtual camera/mic (banner onboarding UI).
+        .route("/api/devices", get(api_devices))
+        // Phase 4: aksi "Pasang" dari banner (B8: error user terstruktur
+        // — backend mengembalikan langkah instalasi, bukan memasang diam-diam).
+        .route("/api/devices/install", post(api_devices_install))
 }
 
 /// `GET /` — halaman pairing PWA (B1).
@@ -279,7 +284,10 @@ async fn api_state(State(state): State<Arc<AppState>>) -> axum::Json<serde_json:
         "pin_remaining_secs": pairing.remaining(crate::app::now_secs()),
         "pair_url": format!("https://{}", lan_host(&state)),
         "qr_url": "/qr",
-        "vcam_installed": vcam_installed(&state).await,
+        "vcam_installed": matches!(
+            state.vcam_status().await,
+            Ok(phonecam_vcam::VCamStatus::Installed)
+        ),
         "sources": sources,
     }))
 }
@@ -642,10 +650,75 @@ fn listen_port() -> u16 {
     8443
 }
 
-/// Cek status pemasangan virtual camera (C3.1 banner).
-async fn vcam_installed(state: &Arc<AppState>) -> bool {
-    match state.vcam_or_start().await {
-        Ok(v) => matches!(v.status().await, Ok(phonecam_vcam::VCamStatus::Installed)),
-        Err(_) => false,
+/// `GET /api/devices` — status driver virtual camera/mic (Phase 4:
+/// banner onboarding UI + klarifikasi VCAM/VMIC_NOT_INSTALLED).
+/// Status dibaca tanpa start (`status()` hanya mengecek registrasi).
+async fn api_devices(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let vcam = match state.vcam_status().await {
+        Ok(s) => match s {
+            phonecam_vcam::VCamStatus::Installed => "installed",
+            phonecam_vcam::VCamStatus::NotInstalled => "not_installed",
+        },
+        Err(_) => "unknown",
+    };
+    let vmic = match state.vmic_status().await {
+        Ok(s) => match s {
+            phonecam_vmic::VMicStatus::Installed => "installed",
+            phonecam_vmic::VMicStatus::NotInstalled => "not_installed",
+        },
+        Err(_) => "unknown",
+    };
+    axum::Json(serde_json::json!({ "vcam": vcam, "vmic": vmic }))
+}
+
+/// `POST /api/devices/install` — aksi Pasang dari banner onboarding (B8).
+///
+/// Backend Windows memakai OBS Virtual Camera: dipasang lewat installer OBS
+/// (distribusi terpisah, lisensi GPL — tidak dibundel tanpa ADR). Endpoint
+/// ini memanggil `install()` lalu mengembalikan info error user terstruktur
+/// (judul/penjelasan/aksi) supaya UI menampilkan langkah yang jelas.
+async fn api_devices_install(
+    axum::extract::Query(kind): axum::extract::Query<InstallKind>,
+) -> axum::response::Response {
+    use phonecam_core::error::UserErrorCode;
+    let result = match kind.kind.as_str() {
+        // install() pada backend Windows selalu mengembalikan error user
+        // yang menjelaskan langkah memasang OBS — tidak ada resource
+        // diikat, jadi aman dipanggil langsung tanpa AppState.
+        "vcam" => phonecam_vcam::platform_backend().install().await,
+        "vmic" => phonecam_vmic::platform_backend().install().await,
+        _ => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "kind harus vcam atau vmic",
+            )
+                .into_response()
+        }
+    };
+    match result {
+        Ok(()) => (axum::http::StatusCode::NO_CONTENT, "").into_response(),
+        Err(e) => {
+            // Error user (VCAM/VMIC_NOT_INSTALLED): JSON terstruktur supaya
+            // UI menampilkan judul + langkah perbaikan, bukan string mentah.
+            let (title, explain, action) = match e {
+                phonecam_core::Error::User { code, .. } => UserErrorCode::info(code),
+                _ => (
+                    "Gagal memasang",
+                    "Kesalahan tak terduga.",
+                    "Cek log aplikasi.",
+                ),
+            };
+            let body = serde_json::json!({
+                "title": title,
+                "explain": explain,
+                "action": action,
+            });
+            (axum::http::StatusCode::CONFLICT, axum::Json(body)).into_response()
+        }
     }
+}
+
+#[derive(serde::Deserialize)]
+struct InstallKind {
+    kind: String,
 }

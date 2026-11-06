@@ -76,6 +76,28 @@ impl AppState {
         }
     }
 
+    /// Status pemasangan virtual camera tanpa start (B8/Phase 4: UI
+    /// menampilkan banner instalasi driver). Backend dibuat sekali per
+    /// panggilan — `status()` hanya membaca, tidak mengikat resource.
+    pub async fn vcam_status(&self) -> phonecam_core::Result<phonecam_vcam::VCamStatus> {
+        // Guard di-drop sebelum .await: parking_lot guard tidak Send,
+        // tidak boleh di-hold across await (handler axum wajib Send).
+        let backend = { self.vcam.read().as_ref().cloned() };
+        match backend {
+            Some(v) => v.status().await,
+            None => phonecam_vcam::platform_backend().status().await,
+        }
+    }
+
+    /// Status pemasangan virtual mic (B8/Phase 4), tanpa start.
+    pub async fn vmic_status(&self) -> phonecam_core::Result<phonecam_vmic::VMicStatus> {
+        let backend = { self.vmic.read().as_ref().cloned() };
+        match backend {
+            Some(v) => v.status().await,
+            None => phonecam_vmic::platform_backend().status().await,
+        }
+    }
+
     /// Aktifkan virtual camera bila belum aktif (B2: VCAM_NOT_INSTALLED
     /// bila backend tidak terpasang). Mengembalikan handle yang sama untuk
     /// semua pemanggil.
@@ -100,7 +122,7 @@ impl AppState {
             pixel_format: phonecam_vcam::VCamPixelFormat::Nv12,
         };
         backend.start(format).await?;
-        let v: std::sync::Arc<dyn VCam> = std::sync::Arc::from(backend);
+        let v: std::sync::Arc<dyn VCam> = backend;
         *self.vcam.write() = Some(v.clone());
         Ok(v)
     }
@@ -121,7 +143,7 @@ impl AppState {
         }
         let backend = phonecam_vmic::platform_backend();
         backend.start(VMicFormat::default()).await?;
-        let v: std::sync::Arc<dyn VMic> = std::sync::Arc::from(backend);
+        let v: std::sync::Arc<dyn VMic> = backend;
         *self.vmic.write() = Some(v.clone());
         Ok(v)
     }

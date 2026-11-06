@@ -214,14 +214,15 @@ impl WindowsBackend {
     }
 }
 
-/// Backend virtual mic untuk OS ini (A9).
+/// Backend virtual mic untuk OS ini (A9). `Arc<dyn VMic>` agar future
+/// yang menahan backend tetap `Send` (lihat vcam::platform_backend).
 #[cfg(target_os = "windows")]
-pub fn platform_backend() -> Box<dyn VMic> {
-    Box::new(WindowsBackend::default())
+pub fn platform_backend() -> std::sync::Arc<dyn VMic> {
+    std::sync::Arc::new(WindowsBackend::default())
 }
 
 /// Backend virtual mic untuk OS ini (A9: non-Windows belum diimplementasi).
 #[cfg(not(target_os = "windows"))]
-pub fn platform_backend() -> Box<dyn VMic> {
-    Box::new(UnsupportedBackend)
+pub fn platform_backend() -> std::sync::Arc<dyn VMic> {
+    std::sync::Arc::new(UnsupportedBackend)
 }

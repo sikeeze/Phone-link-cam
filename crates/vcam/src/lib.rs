@@ -222,16 +222,19 @@ impl VCam for WindowsBackend {
     }
 }
 
-/// Backend virtual camera untuk OS ini (A9).
+/// Backend virtual camera untuk OS ini (A9). Mengembalikan `Arc<dyn VCam>`
+/// (bukan `Box`) agar future yang menahan backend tetap `Send` — handler
+/// axum wajib `Send` (Phase 4: `GET /api/devices` memanggil `status()`
+/// langsung dari handler).
 #[cfg(target_os = "windows")]
-pub fn platform_backend() -> Box<dyn VCam> {
-    Box::new(WindowsBackend::new())
+pub fn platform_backend() -> std::sync::Arc<dyn VCam> {
+    std::sync::Arc::new(WindowsBackend::new())
 }
 
 /// Backend virtual camera untuk OS ini (A9: non-Windows belum diimplementasi).
 #[cfg(not(target_os = "windows"))]
-pub fn platform_backend() -> Box<dyn VCam> {
-    Box::new(UnsupportedBackend)
+pub fn platform_backend() -> std::sync::Arc<dyn VCam> {
+    std::sync::Arc::new(UnsupportedBackend)
 }
 
 #[cfg(test)]

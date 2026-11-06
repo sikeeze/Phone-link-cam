@@ -182,7 +182,30 @@ function Home({
             <div class="banner">
               <span aria-hidden="true">⚠</span>
               <span>Virtual camera belum terpasang.</span>
-              <button class="btn">Pasang</button>
+              <button
+                class="btn"
+                onClick={async () => {
+                  // Phase 4: aksi jelas saat driver hilang (VCAM_NOT_INSTALLED).
+                  // Backend OSS Virtual Camera membalas 409 + langkah pemasangan.
+                  try {
+                    const res = await fetch("/api/devices/install?kind=vcam", {
+                      method: "POST",
+                    });
+                    if (res.status === 409) {
+                      const body = await res.json();
+                      window.alert(
+                        `${body.title ?? "Gagal memasang"}\n\n${body.explain ?? ""}\n\n${body.action ?? ""}`,
+                      );
+                    } else if (!res.ok) {
+                      window.alert("Gagal memasang virtual camera (cek log aplikasi).");
+                    }
+                  } catch {
+                    window.alert("Permintaan instalasi gagal (server tidak merespons).");
+                  }
+                }}
+              >
+                Pasang
+              </button>
             </div>
           )}
         </div>

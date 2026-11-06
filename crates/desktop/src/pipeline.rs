@@ -84,5 +84,5 @@ pub async fn start_vcam() -> phonecam_core::Result<Arc<dyn VCam>> {
             pixel_format: VCamPixelFormat::Nv12,
         })
         .await?;
-    Ok(Arc::from(backend))
+    Ok(backend)
 }
